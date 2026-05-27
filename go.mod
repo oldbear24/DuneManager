@@ -1,6 +1,6 @@
 module github.com/oldbear24/DuneManager
 
-go 1.24
+go 1.24.0
 
 require (
 	fyne.io/fyne/v2 v2.5.3
