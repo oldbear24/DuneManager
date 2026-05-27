@@ -75,7 +75,7 @@ func runForeground() {
 	}
 	defer cleanup()
 
-	srv := api.NewServer()
+	srv := api.NewServer("--run")
 	logging.Infof("service starting in foreground on %s", config.ServiceAddr())
 	bot := startDiscordBot()
 	defer func() {
@@ -99,7 +99,7 @@ func (ds *duneService) Execute(_ []string, r <-chan svc.ChangeRequest, changes c
 	const cmdsAccepted = svc.AcceptStop | svc.AcceptShutdown
 	changes <- svc.Status{State: svc.StartPending}
 
-	ds.srv = api.NewServer()
+	ds.srv = api.NewServer("--start")
 	go func() {
 		if err := ds.srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logging.Errorf("service listener failed: %v", err)

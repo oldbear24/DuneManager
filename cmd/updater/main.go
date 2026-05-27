@@ -45,8 +45,13 @@ func run(planPath string) error {
 		}
 	}
 
-	if err := updater.ApplyUpdate(plan.SourcePath, plan.TargetPath); err != nil {
-		return err
+	if plan.SourcePath != "" || plan.TargetPath != "" {
+		if plan.SourcePath == "" || plan.TargetPath == "" {
+			return fmt.Errorf("invalid update plan: sourcePath and targetPath must both be set")
+		}
+		if err := updater.ApplyUpdate(plan.SourcePath, plan.TargetPath); err != nil {
+			return err
+		}
 	}
 
 	if plan.RestartPath != "" {

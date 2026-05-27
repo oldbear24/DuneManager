@@ -6,10 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/oldbear24/DuneManager/internal/build"
@@ -22,17 +20,21 @@ import (
 
 // Server wraps the HTTP service that runs in the background process.
 type Server struct {
-	httpServer *http.Server
-	mu         sync.Mutex
-	busy       bool
-	activeKill func()
-	killable   bool
-	killQueued bool
+	httpServer  *http.Server
+	restartArgs []string
+	mu          sync.Mutex
+	busy        bool
+	activeKill  func()
+	killable    bool
+	killQueued  bool
 }
 
 // NewServer builds the HTTP mux and server struct but does not start listening.
-func NewServer() *Server {
-	s := &Server{}
+func NewServer(restartArgs ...string) *Server {
+	if len(restartArgs) == 0 {
+		restartArgs = []string{"--run"}
+	}
+	s := &Server{restartArgs: append([]string(nil), restartArgs...)}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/status", s.handleStatus)
 	mux.HandleFunc("/api/exec", s.handleExec)
@@ -212,12 +214,18 @@ func writeSSE(w http.ResponseWriter, evt SSEEvent) {
 
 // execCmd starts args, registers the kill func, and blocks until done.
 func (s *Server) execCmd(args []string, out func(string)) error {
+	return s.execCmdWithOptions(args, out, true)
+}
+
+func (s *Server) execCmdWithOptions(args []string, out func(string), closeStdin bool) error {
 	done := make(chan error, 1)
 	stdin, kill, err := runner.RunInteractive(args, out, func(e error) { done <- e })
 	if err != nil {
 		return err
 	}
-	_ = stdin.Close()
+	if closeStdin {
+		_ = stdin.Close()
+	}
 	queuedKill := false
 	s.mu.Lock()
 	s.activeKill = kill
@@ -255,7 +263,7 @@ func (s *Server) execSSHWithTTY(cfg config.File, state *vm.State, remoteCmd stri
 		fmt.Sprintf("dune@%s", state.IP),
 		remoteCmd,
 	)
-	return s.execCmd(args, out)
+	return s.execCmdWithOptions(args, out, !forceTTY)
 }
 
 func (s *Server) execBattlegroup(cfg config.File, state *vm.State, subcommand string, out func(string)) error {
@@ -467,7 +475,7 @@ func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 			SourcePath:  tmpSvc,
 			TargetPath:  svcPath,
 			RestartPath: svcPath,
-			RestartArgs: []string{"--run"},
+			RestartArgs: s.restartArgs,
 			HideWindow:  true,
 		}); err != nil {
 			logging.Errorf("service update apply failed: %v", err)
@@ -510,20 +518,38 @@ func (s *Server) handleServiceRestart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "busy: another command is running", http.StatusConflict)
 		return
 	}
+	release := true
+	defer func() {
+		if release {
+			s.endExclusive()
+		}
+	}()
+
+	svcPath, err := os.Executable()
+	if err != nil {
+		logging.Errorf("service restart failed to resolve executable path: %v", err)
+		http.Error(w, "restart failed: executable path unavailable", http.StatusInternalServerError)
+		return
+	}
+	if err := updater.LaunchHelper(updater.HelperPlan{
+		WaitPID:     os.Getpid(),
+		RestartPath: svcPath,
+		RestartArgs: s.restartArgs,
+		HideWindow:  true,
+	}); err != nil {
+		logging.Errorf("service restart handoff failed: %v", err)
+		http.Error(w, "restart failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	writeJSON(w, map[string]string{"status": "restarting"})
 	go func() {
 		defer s.endExclusive()
 		time.Sleep(500 * time.Millisecond)
-		svcPath, _ := os.Executable()
-		cmd := exec.Command(svcPath, "--run")
-		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-		if err := cmd.Start(); err != nil {
-			logging.Errorf("service restart failed: %v", err)
-			return
-		}
-		logging.Infof("service restart started successfully")
+		logging.Infof("service exiting for restart helper handoff")
 		os.Exit(0)
 	}()
+	release = false
 }
 
 func (s *Server) beginExclusive(killable bool) bool {
