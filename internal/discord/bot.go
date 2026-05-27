@@ -8,6 +8,7 @@ import (
 	"github.com/bwmarrin/discordgo"
 
 	"github.com/oldbear24/DuneManager/internal/api"
+	"github.com/oldbear24/DuneManager/internal/logging"
 )
 
 const maxMsgLen = 1900 // Discord cap is 2000; leave margin for formatting
@@ -18,22 +19,25 @@ type Bot struct {
 	client   *api.Client
 	guildID  string
 	chanID   string
+	roleID   string
 	commands []*discordgo.ApplicationCommand
 }
 
 // New creates a Bot but does not connect yet.
 // guildID: register commands for this guild only (instant); empty = global (up to 1h delay).
 // channelID: restrict commands to this channel; empty = allow everywhere.
-func New(token, guildID, channelID string) (*Bot, error) {
+// roleID: restrict bot use to members who have this role; empty = allow all members.
+func New(token, guildID, channelID, roleID string) (*Bot, error) {
 	dg, err := discordgo.New("Bot " + token)
 	if err != nil {
 		return nil, fmt.Errorf("discord session: %w", err)
 	}
 	return &Bot{
-		dg:     dg,
-		client: api.NewClient(),
+		dg:      dg,
+		client:  api.NewClient(),
 		guildID: guildID,
 		chanID:  channelID,
+		roleID:  roleID,
 	}, nil
 }
 
@@ -74,13 +78,13 @@ var commandDefs = []*discordgo.ApplicationCommand{
 						Description: "Action to perform",
 						Required:    true,
 						Choices: []*discordgo.ApplicationCommandOptionChoice{
-							{Name: "status",  Value: "bg-status"},
-							{Name: "start",   Value: "bg-start"},
-							{Name: "stop",    Value: "bg-stop"},
+							{Name: "status", Value: "bg-status"},
+							{Name: "start", Value: "bg-start"},
+							{Name: "stop", Value: "bg-stop"},
 							{Name: "restart", Value: "bg-restart"},
-							{Name: "update",  Value: "bg-update"},
-							{Name: "backup",  Value: "bg-backup"},
-							{Name: "swap",    Value: "bg-swap"},
+							{Name: "update", Value: "bg-update"},
+							{Name: "backup", Value: "bg-backup"},
+							{Name: "swap", Value: "bg-swap"},
 						},
 					},
 				},
@@ -135,6 +139,21 @@ func (b *Bot) onInteraction(s *discordgo.Session, i *discordgo.InteractionCreate
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{
 				Content: "❌ Dune Manager commands are not allowed in this channel.",
+				Flags:   discordgo.MessageFlagsEphemeral,
+			},
+		})
+		return
+	}
+	if !b.memberAllowed(i.Member) {
+		userID := "unknown"
+		if i.Member != nil && i.Member.User != nil {
+			userID = i.Member.User.ID
+		}
+		logging.Warningf("Discord access denied for user %s: missing required role %s", userID, b.roleID)
+		_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{
+				Content: "❌ You do not have permission to use Dune Manager commands.",
 				Flags:   discordgo.MessageFlagsEphemeral,
 			},
 		})
@@ -202,8 +221,8 @@ func (b *Bot) handleStatus(s *discordgo.Session, i *discordgo.InteractionCreate)
 				Color: embedColor(status),
 				Fields: []*discordgo.MessageEmbedField{
 					{Name: "VM State", Value: vmState, Inline: true},
-					{Name: "IP",       Value: ip,      Inline: true},
-					{Name: "Busy",     Value: busy,    Inline: true},
+					{Name: "IP", Value: ip, Inline: true},
+					{Name: "Busy", Value: busy, Inline: true},
 				},
 			},
 		},
@@ -318,4 +337,19 @@ func embedColor(s *api.StatusResponse) int {
 	default:
 		return 0x787878
 	}
+}
+
+func (b *Bot) memberAllowed(member *discordgo.Member) bool {
+	if b.roleID == "" {
+		return true
+	}
+	if member == nil {
+		return false
+	}
+	for _, roleID := range member.Roles {
+		if roleID == b.roleID {
+			return true
+		}
+	}
+	return false
 }

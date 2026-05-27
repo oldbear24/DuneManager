@@ -88,6 +88,7 @@ You can also edit it via **⚙ Settings** in the GUI.
 | `discordToken` | Discord bot token — leave empty to disable | _(disabled)_ |
 | `discordGuildID` | Guild ID for instant slash-command registration | _(global)_ |
 | `discordChannelID` | Restrict bot commands to one channel | _(any channel)_ |
+| `discordRoleID` | Restrict bot commands to members with one Discord role | _(any role)_ |
 | `githubRepo` | `owner/repo` for GitHub release auto-update checks | _(disabled)_ |
 
 > If you change the port, restart the service for it to take effect.
