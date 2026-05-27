@@ -39,9 +39,21 @@ jobs:
           go build -ldflags "-X github.com/oldbear24/DuneManager/internal/build.Version=${{ github.ref_name }}" `
             -o dune-manager-svc.exe ./cmd/service
 
+      - name: Build dune-manager-updater.exe
+        run: |
+          go build -o dune-manager-updater.exe ./cmd/updater
+
+      - name: Create release zip
+        run: |
+          Compress-Archive `
+            -Path dune-manager.exe, dune-manager-svc.exe, dune-manager-updater.exe `
+            -DestinationPath dune-manager-${{ github.ref_name }}-windows.zip
+
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dune-manager.exe
             dune-manager-svc.exe
+            dune-manager-updater.exe
+            dune-manager-${{ github.ref_name }}-windows.zip

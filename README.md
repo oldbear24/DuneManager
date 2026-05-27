@@ -8,6 +8,7 @@ The project is split into two binaries:
 |---|---|
 | `dune-manager-svc.exe` | Background HTTP service — runs all Hyper-V / SSH operations. Can run as a Windows service, a Task Scheduler task, or in a console with `--run`. |
 | `dune-manager.exe` | GUI client — connects to the service via HTTP. **No elevation required.** |
+| `dune-manager-updater.exe` | Helper used during self-update so running binaries can be replaced safely. |
 
 ---
 
@@ -20,7 +21,7 @@ The project is split into two binaries:
 - ⚙ Settings dialog — configure port, VM name, scripts dir, SSH key path, GitHub repo
 - ⏹ Kill button — cancel a running command from the GUI
 - Discord bot — control the service via `/dune` slash commands (optional)
-- 🔄 Auto-update — checks GitHub Releases on startup; one-click update for both binaries
+- 🔄 Auto-update — manual check with one-click update for both binaries
 
 ---
 
@@ -47,6 +48,9 @@ go build -ldflags "-H windowsgui -X github.com/oldbear24/DuneManager/internal/bu
 
 # Background service binary
 go build -ldflags "-X github.com/oldbear24/DuneManager/internal/build.Version=v1.0.0" -o dune-manager-svc.exe ./cmd/service/
+
+# Updater helper binary
+go build -o dune-manager-updater.exe ./cmd/updater/
 ```
 
 ---
@@ -56,6 +60,7 @@ go build -ldflags "-X github.com/oldbear24/DuneManager/internal/build.Version=v1
 ```
 dune-manager.exe          ← GUI client
 dune-manager-svc.exe      ← Background service
+dune-manager-updater.exe  ← Self-update helper
 dune-manager.json         ← Config file (auto-created on first save)
 bats\
   battlegroup-management\
@@ -97,7 +102,7 @@ You can also edit it via **⚙ Settings** in the GUI.
 
 ## Auto-Update
 
-When `githubRepo` is set (e.g. `"alice/dune-manager"`) the GUI checks for a newer GitHub Release on startup.
+When `githubRepo` is set (e.g. `"alice/dune-manager"`) the GUI can check for a newer GitHub Release from the **🔍 Check updates** button.
 
 If an update is available an **⬆ Update vX.Y.Z** button appears in the status bar. Clicking it will:
 
@@ -111,6 +116,7 @@ If an update is available an **⬆ Update vX.Y.Z** button appears in the status 
 |---|---|
 | `dune-manager-svc.exe` | Background service |
 | `dune-manager.exe` | GUI client |
+| `dune-manager-updater.exe` | Self-update helper |
 
 **Build releases with the version injected:**
 
@@ -118,6 +124,7 @@ If an update is available an **⬆ Update vX.Y.Z** button appears in the status 
 $VERSION = "v1.2.0"
 go build -ldflags "-H windowsgui -X github.com/oldbear24/DuneManager/internal/build.Version=$VERSION" -o dune-manager.exe .
 go build -ldflags "-X github.com/oldbear24/DuneManager/internal/build.Version=$VERSION" -o dune-manager-svc.exe ./cmd/service/
+go build -o dune-manager-updater.exe ./cmd/updater/
 ```
 
 ---

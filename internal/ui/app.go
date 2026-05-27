@@ -4,11 +4,9 @@ import (
 	"fmt"
 	"image/color"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -24,7 +22,6 @@ import (
 	"github.com/oldbear24/DuneManager/internal/discord"
 	"github.com/oldbear24/DuneManager/internal/runner"
 	"github.com/oldbear24/DuneManager/internal/updater"
-	"golang.org/x/sys/windows"
 )
 
 // ── global state ───────────────────────────────────────────────────────────────
@@ -100,9 +97,6 @@ func Run() {
 			refreshStatus()
 		}
 	}()
-
-	// Check for updates once on startup (non-blocking).
-	go checkForUpdateBackground()
 
 	mainWindow.ShowAndRun()
 }
@@ -662,19 +656,6 @@ func cmdRestartService() {
 		}, mainWindow)
 }
 
-// checkForUpdateBackground is called once at startup from a goroutine.
-func checkForUpdateBackground() {
-	info, err := svcClient.CheckUpdate()
-	if err != nil || !info.HasUpdate {
-		return
-	}
-	fyne.Do(func() {
-		updateGUIURL = info.GUIURL
-		updateBtn.SetText(fmt.Sprintf("⬆ Update %s", info.Latest))
-		updateBtn.Show()
-	})
-}
-
 // cmdCheckUpdate is triggered by the manual "Check updates" button.
 func cmdCheckUpdate() {
 	info, err := svcClient.CheckUpdate()
@@ -746,21 +727,16 @@ func cmdApplyUpdate() {
 					appendOutput(fmt.Sprintf("Cannot determine executable path: %v\n", err))
 					return
 				}
-				if err := updater.ApplyUpdate(tmpGUI, guiPath); err != nil {
+				if err := updater.LaunchHelper(updater.HelperPlan{
+					WaitPID:     os.Getpid(),
+					SourcePath:  tmpGUI,
+					TargetPath:  guiPath,
+					RestartPath: guiPath,
+				}); err != nil {
 					appendOutput(fmt.Sprintf("GUI apply failed: %v\n", err))
 					return
 				}
-				appendOutput("GUI updated. Restarting...\n")
-				// Launch the new binary as a fully detached process so it
-				// survives when the current process exits.
-				cmd := exec.Command(guiPath)
-				cmd.SysProcAttr = &syscall.SysProcAttr{
-					CreationFlags: uint32(windows.CREATE_NEW_PROCESS_GROUP | windows.DETACHED_PROCESS),
-				}
-				if err := cmd.Start(); err != nil {
-					appendOutput(fmt.Sprintf("Restart failed: %v\n", err))
-					return
-				}
+				appendOutput("GUI update staged. Restarting...\n")
 				time.Sleep(500 * time.Millisecond)
 				fyne.Do(func() {
 					fyneApp.Quit()

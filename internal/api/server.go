@@ -452,14 +452,21 @@ func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 		}
 		emit("output", "Applying service update...\n")
 		svcPath, _ := os.Executable()
-		if err := updater.ApplyUpdate(tmpSvc, svcPath); err != nil {
+		if err := updater.LaunchHelper(updater.HelperPlan{
+			WaitPID:     os.Getpid(),
+			SourcePath:  tmpSvc,
+			TargetPath:  svcPath,
+			RestartPath: svcPath,
+			RestartArgs: []string{"--run"},
+			HideWindow:  true,
+		}); err != nil {
 			logging.Errorf("service update apply failed: %v", err)
 			ev, _ := json.Marshal(SSEEvent{Type: "done", Error: "apply svc: " + err.Error()})
 			fmt.Fprintf(w, "data: %s\n\n", ev)
 			return
 		}
-		logging.Infof("service binary updated successfully")
-		emit("output", "Service binary updated.\n")
+		logging.Infof("service update handed off to updater helper")
+		emit("output", "Service update staged.\n")
 	}
 
 	// Return GUI download URL in done.Line so the GUI can self-update.
@@ -474,14 +481,7 @@ func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer s.endExclusive()
 		time.Sleep(2 * time.Second)
-		svcPath, _ := os.Executable()
-		cmd := exec.Command(svcPath, "--run")
-		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-		if err := cmd.Start(); err != nil {
-			logging.Errorf("service restart after update failed: %v", err)
-			return
-		}
-		logging.Infof("service restart after update started successfully")
+		logging.Infof("service exiting for updater helper handoff")
 		os.Exit(0)
 	}()
 	release = false

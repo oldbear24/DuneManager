@@ -6,10 +6,24 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"syscall"
 	"time"
+
+	"golang.org/x/sys/windows"
 )
 
 const userAgent = "dune-manager-updater/1.0"
+
+type HelperPlan struct {
+	WaitPID     int      `json:"waitPid"`
+	SourcePath  string   `json:"sourcePath"`
+	TargetPath  string   `json:"targetPath"`
+	RestartPath string   `json:"restartPath,omitempty"`
+	RestartArgs []string `json:"restartArgs,omitempty"`
+	HideWindow  bool     `json:"hideWindow,omitempty"`
+}
 
 // Release is the GitHub Releases API response shape we care about.
 type Release struct {
@@ -152,6 +166,50 @@ func ApplyUpdate(newBinaryPath, targetPath string) error {
 		time.Sleep(5 * time.Second)
 		_ = os.Remove(oldPath)
 	}()
+	return nil
+}
+
+func HelperPath() string {
+	if exe, err := os.Executable(); err == nil {
+		return filepath.Join(filepath.Dir(exe), "dune-manager-updater.exe")
+	}
+	cwd, _ := os.Getwd()
+	return filepath.Join(cwd, "dune-manager-updater.exe")
+}
+
+func LaunchHelper(plan HelperPlan) error {
+	helperPath := HelperPath()
+	if _, err := os.Stat(helperPath); err != nil {
+		return fmt.Errorf("updater helper not found at %s", helperPath)
+	}
+	data, err := json.Marshal(plan)
+	if err != nil {
+		return fmt.Errorf("marshal helper plan: %w", err)
+	}
+	planFile, err := os.CreateTemp("", "dune-manager-update-plan-*.json")
+	if err != nil {
+		return fmt.Errorf("create helper plan: %w", err)
+	}
+	planPath := planFile.Name()
+	if _, err := planFile.Write(data); err != nil {
+		_ = planFile.Close()
+		_ = os.Remove(planPath)
+		return fmt.Errorf("write helper plan: %w", err)
+	}
+	if err := planFile.Close(); err != nil {
+		_ = os.Remove(planPath)
+		return fmt.Errorf("close helper plan: %w", err)
+	}
+
+	cmd := exec.Command(helperPath, "--plan", planPath)
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow:    true,
+		CreationFlags: uint32(windows.CREATE_NEW_PROCESS_GROUP | windows.DETACHED_PROCESS),
+	}
+	if err := cmd.Start(); err != nil {
+		_ = os.Remove(planPath)
+		return fmt.Errorf("start updater helper: %w", err)
+	}
 	return nil
 }
 
