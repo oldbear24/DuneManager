@@ -43,10 +43,10 @@ cd DuneManager
 go mod download
 
 # GUI binary (no console window)
-go build -ldflags "-H windowsgui -X dune-manager/internal/build.Version=v1.0.0" -o dune-manager.exe .
+go build -ldflags "-H windowsgui -X github.com/oldbear24/DuneManager/internal/build.Version=v1.0.0" -o dune-manager.exe .
 
 # Background service binary
-go build -ldflags "-X dune-manager/internal/build.Version=v1.0.0" -o dune-manager-svc.exe ./cmd/service/
+go build -ldflags "-X github.com/oldbear24/DuneManager/internal/build.Version=v1.0.0" -o dune-manager-svc.exe ./cmd/service/
 ```
 
 ---
@@ -115,8 +115,8 @@ If an update is available an **⬆ Update vX.Y.Z** button appears in the status 
 
 ```powershell
 $VERSION = "v1.2.0"
-go build -ldflags "-H windowsgui -X dune-manager/internal/build.Version=$VERSION" -o dune-manager.exe .
-go build -ldflags "-X dune-manager/internal/build.Version=$VERSION" -o dune-manager-svc.exe ./cmd/service/
+go build -ldflags "-H windowsgui -X github.com/oldbear24/DuneManager/internal/build.Version=$VERSION" -o dune-manager.exe .
+go build -ldflags "-X github.com/oldbear24/DuneManager/internal/build.Version=$VERSION" -o dune-manager-svc.exe ./cmd/service/
 ```
 
 ---
