@@ -25,8 +25,9 @@ GitHubRepo string `json:"githubRepo,omitempty"`
 }
 
 const (
-defaultPort   = 7374
-defaultVMName = "dune-awakening"
+defaultPort      = 7374
+defaultVMName    = "dune-awakening"
+defaultGitHubRepo = "oldbear24/DuneManager"
 )
 
 var (
@@ -57,6 +58,9 @@ tmp.SSHKeyPath = defaults().SSHKeyPath
 if tmp.ScriptsDir == "" {
 tmp.ScriptsDir = defaults().ScriptsDir
 }
+if tmp.GitHubRepo == "" {
+tmp.GitHubRepo = defaultGitHubRepo
+}
 current = tmp
 }
 }
@@ -80,6 +84,7 @@ Port:       defaultPort,
 VMName:     defaultVMName,
 ScriptsDir: defaultScriptsDir(),
 SSHKeyPath: defaultSSHKeyPath(),
+GitHubRepo: defaultGitHubRepo,
 }
 }
 
