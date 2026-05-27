@@ -1,88 +1,92 @@
 package api
 
 import (
-"bufio"
-"bytes"
-"encoding/json"
-"fmt"
-"net/http"
-"strings"
+	"bufio"
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
 
-"github.com/oldbear24/DuneManager/internal/config"
+	"github.com/oldbear24/DuneManager/internal/config"
 )
 
 // Client talks to the background service over HTTP.
 type Client struct {
-base string
-http *http.Client
+	base string
+	http *http.Client
 }
 
 // NewClient builds a client using the current config port.
 func NewClient() *Client {
-return &Client{
-base: "http://" + config.ServiceAddr(),
-http: &http.Client{}, // zero Timeout = no timeout (streaming needs this)
-}
+	return &Client{
+		base: "http://" + config.ServiceAddr(),
+		http: &http.Client{}, // zero Timeout = no timeout (streaming needs this)
+	}
 }
 
 // GetStatus fetches the current VM/service status.
 func (c *Client) GetStatus() (*StatusResponse, error) {
-resp, err := c.http.Get(c.base + "/api/status")
-if err != nil {
-return nil, err
-}
-defer resp.Body.Close()
-var s StatusResponse
-if err := json.NewDecoder(resp.Body).Decode(&s); err != nil {
-return nil, err
-}
-return &s, nil
+	resp, err := c.http.Get(c.base + "/api/status")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var s StatusResponse
+	if err := json.NewDecoder(resp.Body).Decode(&s); err != nil {
+		return nil, err
+	}
+	return &s, nil
 }
 
 // Exec sends a command and streams output lines via onLine.
 // Returns the "done" event Line field (e.g. a URL) on success.
 func (c *Client) Exec(req ExecRequest, onLine func(string)) (string, error) {
-body, _ := json.Marshal(req)
-resp, err := c.http.Post(c.base+"/api/exec", "application/json", bytes.NewReader(body))
-if err != nil {
-return "", err
-}
-defer resp.Body.Close()
+	body, _ := json.Marshal(req)
+	resp, err := c.http.Post(c.base+"/api/exec", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if err := responseError(resp); err != nil {
+		return "", err
+	}
 
-var lastResult, lastErr string
-scanner := bufio.NewScanner(resp.Body)
-for scanner.Scan() {
-raw := scanner.Text()
-if !strings.HasPrefix(raw, "data: ") {
-continue
-}
-var evt SSEEvent
-if json.Unmarshal([]byte(raw[6:]), &evt) != nil {
-continue
-}
-switch evt.Type {
-case "output":
-onLine(evt.Line)
-case "done":
-lastResult = evt.Line
-lastErr = evt.Error
-}
-}
+	var lastResult, lastErr string
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		raw := scanner.Text()
+		if !strings.HasPrefix(raw, "data: ") {
+			continue
+		}
+		var evt SSEEvent
+		if json.Unmarshal([]byte(raw[6:]), &evt) != nil {
+			continue
+		}
+		switch evt.Type {
+		case "output":
+			onLine(evt.Line)
+		case "done":
+			lastResult = evt.Line
+			lastErr = evt.Error
+		}
+	}
 
-if lastErr != "" {
-return "", fmt.Errorf("%s", lastErr)
-}
-return lastResult, nil
+	if lastErr != "" {
+		return "", fmt.Errorf("%s", lastErr)
+	}
+	return lastResult, nil
 }
 
 // Kill asks the service to terminate the currently-running command.
 func (c *Client) Kill() error {
-resp, err := c.http.Post(c.base+"/api/kill", "application/json", nil)
-if err != nil {
-return err
-}
-resp.Body.Close()
-return nil
+	resp, err := c.http.Post(c.base+"/api/kill", "application/json", nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return responseError(resp)
 }
 
 // GetVersion returns the service binary version string.
@@ -105,8 +109,8 @@ func (c *Client) RestartService() error {
 	if err != nil {
 		return err
 	}
-	resp.Body.Close()
-	return nil
+	defer resp.Body.Close()
+	return responseError(resp)
 }
 
 // CheckUpdate queries the service for update information.
@@ -134,6 +138,9 @@ func (c *Client) ApplyServiceUpdate(onLine func(string)) (string, error) {
 		return "", err
 	}
 	defer resp.Body.Close()
+	if err := responseError(resp); err != nil {
+		return "", err
+	}
 
 	var lastResult, lastErr string
 	scanner := bufio.NewScanner(resp.Body)
@@ -160,3 +167,14 @@ func (c *Client) ApplyServiceUpdate(onLine func(string)) (string, error) {
 	return lastResult, nil
 }
 
+func responseError(resp *http.Response) error {
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	body, _ := io.ReadAll(resp.Body)
+	msg := strings.TrimSpace(string(body))
+	if msg == "" {
+		msg = resp.Status
+	}
+	return fmt.Errorf("%s", msg)
+}

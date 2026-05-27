@@ -162,6 +162,8 @@ Set-Service -Name DuneManager -StartupType Automatic
 
 The service runs as `LocalSystem` (has Hyper-V access) and starts automatically at boot.
 
+The service writes logs to `dune-manager-svc.log` next to the executable. When installed as a Windows service, warnings and errors are also written to **Windows Event Viewer**.
+
 **Other service commands:**
 
 ```powershell
@@ -215,6 +217,7 @@ Then add the GUI to your user's logon startup as shown in Option A.
 |---|---|
 | GUI shows "Service Offline" | Start the service: `.\dune-manager-svc.exe --run` or `.\dune-manager-svc.exe --start` |
 | Service fails to start | Make sure the port (default 7374) is not in use. Check with `netstat -ano \| findstr 7374` |
+| Need service logs | Check `dune-manager-svc.log` next to `dune-manager-svc.exe`, and use Event Viewer for service warnings/errors |
 | VM state shows "error" | Hyper-V PowerShell module may not be loaded. Run `Import-Module Hyper-V` and retry. |
 | SSH commands fail | Verify the SSH key path in ⚙ Settings and that the VM IP is reachable. |
 | Port conflict | Change the port in ⚙ Settings (GUI), save, then restart the service. |
