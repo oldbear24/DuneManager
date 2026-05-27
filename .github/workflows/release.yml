@@ -1,0 +1,51 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install gcc (TDM-GCC for CGO / Fyne)
+        run: |
+          choco install tdm-gcc --no-progress -y
+          echo "C:\TDM-GCC-64\bin" >> $env:GITHUB_PATH
+
+      - name: Build dune-manager.exe
+        env:
+          GOARCH: amd64
+          GOOS: windows
+          CGO_ENABLED: "1"
+        run: |
+          go build -ldflags "-H windowsgui -X dune-manager/internal/build.Version=${{ github.ref_name }}" `
+            -o dune-manager.exe .
+
+      - name: Build dune-manager-svc.exe
+        env:
+          GOARCH: amd64
+          GOOS: windows
+          CGO_ENABLED: "1"
+        run: |
+          go build -ldflags "-X dune-manager/internal/build.Version=${{ github.ref_name }}" `
+            -o dune-manager-svc.exe ./cmd/service
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dune-manager.exe
+            dune-manager-svc.exe
