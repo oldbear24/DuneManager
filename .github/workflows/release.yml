@@ -12,6 +12,7 @@ jobs:
     runs-on: windows-latest
     env:
       CGO_ENABLED: "1"
+      GOTOOLCHAIN: local
 
     steps:
       - name: Checkout
@@ -20,10 +21,13 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: 'stable'
+          go-version-file: go.mod
 
       - name: Add MinGW to PATH (pre-installed on windows-latest)
         run: echo "C:\msys64\ucrt64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Download dependencies
+        run: go mod download
 
       - name: Build dune-manager.exe
         run: |
