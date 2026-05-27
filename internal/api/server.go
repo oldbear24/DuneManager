@@ -12,11 +12,11 @@ import (
 "syscall"
 "time"
 
-"dune-manager/internal/build"
-"dune-manager/internal/config"
-"dune-manager/internal/runner"
-"dune-manager/internal/updater"
-"dune-manager/internal/vm"
+"github.com/oldbear24/DuneManager/internal/build"
+"github.com/oldbear24/DuneManager/internal/config"
+"github.com/oldbear24/DuneManager/internal/runner"
+"github.com/oldbear24/DuneManager/internal/updater"
+"github.com/oldbear24/DuneManager/internal/vm"
 )
 
 // Server wraps the HTTP service that runs in the background process.

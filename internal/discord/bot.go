@@ -7,7 +7,7 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 
-	"dune-manager/internal/api"
+	"github.com/oldbear24/DuneManager/internal/api"
 )
 
 const maxMsgLen = 1900 // Discord cap is 2000; leave margin for formatting

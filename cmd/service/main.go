@@ -8,9 +8,9 @@ import (
 "os"
 "time"
 
-"dune-manager/internal/api"
-"dune-manager/internal/config"
-"dune-manager/internal/discord"
+"github.com/oldbear24/DuneManager/internal/api"
+"github.com/oldbear24/DuneManager/internal/config"
+"github.com/oldbear24/DuneManager/internal/discord"
 "golang.org/x/sys/windows/svc"
 "golang.org/x/sys/windows/svc/eventlog"
 "golang.org/x/sys/windows/svc/mgr"

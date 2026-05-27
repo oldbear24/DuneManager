@@ -18,10 +18,10 @@ import (
 "fyne.io/fyne/v2/layout"
 "fyne.io/fyne/v2/widget"
 
-"dune-manager/internal/api"
-"dune-manager/internal/config"
-"dune-manager/internal/runner"
-"dune-manager/internal/updater"
+"github.com/oldbear24/DuneManager/internal/api"
+"github.com/oldbear24/DuneManager/internal/config"
+"github.com/oldbear24/DuneManager/internal/runner"
+"github.com/oldbear24/DuneManager/internal/updater"
 )
 
 // ── global state ───────────────────────────────────────────────────────────────

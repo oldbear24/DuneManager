@@ -8,7 +8,7 @@ import (
 "net/http"
 "strings"
 
-"dune-manager/internal/config"
+"github.com/oldbear24/DuneManager/internal/config"
 )
 
 // Client talks to the background service over HTTP.

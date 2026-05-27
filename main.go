@@ -1,8 +1,8 @@
 package main
 
 import (
-"dune-manager/internal/config"
-"dune-manager/internal/ui"
+"github.com/oldbear24/DuneManager/internal/config"
+"github.com/oldbear24/DuneManager/internal/ui"
 )
 
 func main() {
