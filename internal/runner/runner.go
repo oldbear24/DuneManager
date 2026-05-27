@@ -2,12 +2,13 @@ package runner
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
-	"syscall"
 	"sync"
+	"syscall"
 )
 
 // RunPS executes an inline PowerShell script, streaming each line to onOutput.
@@ -136,10 +137,7 @@ func RunInteractive(args []string, onOutput func(string), onDone func(error)) (i
 	var wg sync.WaitGroup
 	pipe := func(r io.Reader) {
 		defer wg.Done()
-		scanner := bufio.NewScanner(r)
-		for scanner.Scan() {
-			onOutput(scanner.Text() + "\n")
-		}
+		scanStream(r, onOutput)
 	}
 	wg.Add(2)
 	go pipe(stdout)
@@ -150,7 +148,6 @@ func RunInteractive(args []string, onOutput func(string), onDone func(error)) (i
 	}()
 	return stdinPipe, kill, nil
 }
-
 
 func runAndStream(cmd *exec.Cmd, onOutput func(string)) error {
 	stdout, err := cmd.StdoutPipe()
@@ -170,10 +167,7 @@ func runAndStream(cmd *exec.Cmd, onOutput func(string)) error {
 
 	pipe := func(r io.Reader) {
 		defer wg.Done()
-		scanner := bufio.NewScanner(r)
-		for scanner.Scan() {
-			onOutput(scanner.Text() + "\n")
-		}
+		scanStream(r, onOutput)
 	}
 
 	wg.Add(2)
@@ -182,4 +176,29 @@ func runAndStream(cmd *exec.Cmd, onOutput func(string)) error {
 	wg.Wait()
 
 	return cmd.Wait()
+}
+
+func scanStream(r io.Reader, onOutput func(string)) {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	scanner.Split(scanLinesOrCR)
+	for scanner.Scan() {
+		onOutput(scanner.Text() + "\n")
+	}
+}
+
+func scanLinesOrCR(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	if atEOF && len(data) == 0 {
+		return 0, nil, nil
+	}
+	if i := bytes.IndexAny(data, "\r\n"); i >= 0 {
+		if data[i] == '\r' && i+1 < len(data) && data[i+1] == '\n' {
+			return i + 2, data[:i], nil
+		}
+		return i + 1, data[:i], nil
+	}
+	if atEOF {
+		return len(data), data, nil
+	}
+	return 0, nil, nil
 }
