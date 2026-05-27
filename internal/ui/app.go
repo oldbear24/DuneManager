@@ -8,6 +8,7 @@ import (
 "strconv"
 "strings"
 "sync"
+"syscall"
 "time"
 
 "fyne.io/fyne/v2"
@@ -22,6 +23,7 @@ import (
 "github.com/oldbear24/DuneManager/internal/config"
 "github.com/oldbear24/DuneManager/internal/runner"
 "github.com/oldbear24/DuneManager/internal/updater"
+"golang.org/x/sys/windows"
 )
 
 // ── global state ───────────────────────────────────────────────────────────────
@@ -563,15 +565,23 @@ func cmdCheckUpdate() {
 		dialog.ShowError(err, mainWindow)
 		return
 	}
+	if info.Current == "dev" {
+		dialog.ShowInformation("Dev build",
+			fmt.Sprintf("Running a dev build — update checks are skipped.\nLatest release: %s", info.Latest),
+			mainWindow)
+		return
+	}
 	if !info.HasUpdate {
-		dialog.ShowInformation("Up to date", "You are running the latest version.", mainWindow)
+		dialog.ShowInformation("Up to date",
+			fmt.Sprintf("You are running the latest version (%s).", info.Current),
+			mainWindow)
 		return
 	}
 	updateGUIURL = info.GUIURL
 	updateBtn.SetText(fmt.Sprintf("⬆ Update %s", info.Latest))
 	updateBtn.Show()
 	dialog.ShowInformation("Update available",
-		fmt.Sprintf("Version %s is available.\nClick the update button in the status bar to apply.", info.Latest),
+		fmt.Sprintf("Version %s is available (current: %s).\nClick the update button in the status bar to apply.", info.Latest, info.Current),
 		mainWindow)
 }
 
@@ -616,9 +626,17 @@ func cmdApplyUpdate() {
 					return
 				}
 				appendOutput("GUI updated. Restarting...\n")
-				// Start the new GUI binary and quit the current one.
+				// Launch the new binary as a fully detached process so it
+				// survives when the current process exits.
 				cmd := exec.Command(guiPath)
-				_ = cmd.Start()
+				cmd.SysProcAttr = &syscall.SysProcAttr{
+					CreationFlags: uint32(windows.CREATE_NEW_PROCESS_GROUP | windows.DETACHED_PROCESS),
+				}
+				if err := cmd.Start(); err != nil {
+					appendOutput(fmt.Sprintf("Restart failed: %v\n", err))
+					return
+				}
+				time.Sleep(500 * time.Millisecond)
 				fyneApp.Quit()
 			})
 		}, mainWindow)
