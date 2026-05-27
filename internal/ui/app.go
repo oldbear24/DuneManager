@@ -232,8 +232,10 @@ func refreshStatus() {
 		currentStatus = status
 	}
 	statusMu.Unlock()
-	updateStatusUI(status)
-	updateButtonStates(status)
+	fyne.Do(func() {
+		updateStatusUI(status)
+		updateButtonStates(status)
+	})
 }
 
 func updateStatusUI(status *api.StatusResponse) {
@@ -319,9 +321,10 @@ func appendOutput(text string) {
 	outputBuf.WriteString(text)
 	full := outputBuf.String()
 	outputMu.Unlock()
-	outputEntry.SetText(full)
-	// Schedule scroll after Fyne repaints the new content.
-	fyne.Do(outputScroll.ScrollToBottom)
+	fyne.Do(func() {
+		outputEntry.SetText(full)
+		outputScroll.ScrollToBottom()
+	})
 }
 
 func appendHeader(title string) {
@@ -665,36 +668,46 @@ func checkForUpdateBackground() {
 	if err != nil || !info.HasUpdate {
 		return
 	}
-	updateGUIURL = info.GUIURL
-	updateBtn.SetText(fmt.Sprintf("⬆ Update %s", info.Latest))
-	updateBtn.Show()
+	fyne.Do(func() {
+		updateGUIURL = info.GUIURL
+		updateBtn.SetText(fmt.Sprintf("⬆ Update %s", info.Latest))
+		updateBtn.Show()
+	})
 }
 
 // cmdCheckUpdate is triggered by the manual "Check updates" button.
 func cmdCheckUpdate() {
 	info, err := svcClient.CheckUpdate()
 	if err != nil {
-		dialog.ShowError(err, mainWindow)
+		fyne.Do(func() {
+			dialog.ShowError(err, mainWindow)
+		})
 		return
 	}
 	if info.Current == "dev" {
-		dialog.ShowInformation("Dev build",
-			fmt.Sprintf("Running a dev build — update checks are skipped.\nLatest release: %s", info.Latest),
-			mainWindow)
+		fyne.Do(func() {
+			dialog.ShowInformation("Dev build",
+				fmt.Sprintf("Running a dev build — update checks are skipped.\nLatest release: %s", info.Latest),
+				mainWindow)
+		})
 		return
 	}
 	if !info.HasUpdate {
-		dialog.ShowInformation("Up to date",
-			fmt.Sprintf("You are running the latest version (%s).", info.Current),
-			mainWindow)
+		fyne.Do(func() {
+			dialog.ShowInformation("Up to date",
+				fmt.Sprintf("You are running the latest version (%s).", info.Current),
+				mainWindow)
+		})
 		return
 	}
-	updateGUIURL = info.GUIURL
-	updateBtn.SetText(fmt.Sprintf("⬆ Update %s", info.Latest))
-	updateBtn.Show()
-	dialog.ShowInformation("Update available",
-		fmt.Sprintf("Version %s is available (current: %s).\nClick the update button in the status bar to apply.", info.Latest, info.Current),
-		mainWindow)
+	fyne.Do(func() {
+		updateGUIURL = info.GUIURL
+		updateBtn.SetText(fmt.Sprintf("⬆ Update %s", info.Latest))
+		updateBtn.Show()
+		dialog.ShowInformation("Update available",
+			fmt.Sprintf("Version %s is available (current: %s).\nClick the update button in the status bar to apply.", info.Latest, info.Current),
+			mainWindow)
+	})
 }
 
 // cmdApplyUpdate is triggered when the user clicks the update button.
@@ -749,7 +762,9 @@ func cmdApplyUpdate() {
 					return
 				}
 				time.Sleep(500 * time.Millisecond)
-				fyneApp.Quit()
+				fyne.Do(func() {
+					fyneApp.Quit()
+				})
 			})
 		}, mainWindow)
 }
