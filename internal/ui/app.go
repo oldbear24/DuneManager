@@ -138,6 +138,7 @@ ipLabel,
 layout.NewSpacer(),
 updateBtn,
 widget.NewButton("⟳ Refresh", func() { go refreshStatus() }),
+widget.NewButton("↺ Restart Service", cmdRestartService),
 widget.NewButton("🔍 Check updates", func() { go cmdCheckUpdate() }),
 widget.NewButton("⚙ Settings", cmdSettings),
 )
@@ -547,6 +548,29 @@ d.Show()
 }
 
 // ── auto-update ────────────────────────────────────────────────────────────────
+
+// cmdRestartService asks the user to confirm, then restarts the background service.
+func cmdRestartService() {
+	dialog.ShowConfirm("Restart Service",
+		"Restart the Dune Manager background service?\nThis will not affect the VM or battlegroup.",
+		func(ok bool) {
+			if !ok {
+				return
+			}
+			appendHeader("Restart Service")
+			if err := svcClient.RestartService(); err != nil {
+				appendOutput(fmt.Sprintf("Error: %v\n", err))
+				return
+			}
+			appendOutput("Service restarting…\n")
+			// Wait briefly then re-connect.
+			go func() {
+				time.Sleep(2 * time.Second)
+				svcClient = api.NewClient()
+				refreshStatus()
+			}()
+		}, mainWindow)
+}
 
 // checkForUpdateBackground is called once at startup from a goroutine.
 func checkForUpdateBackground() {

@@ -37,6 +37,7 @@ mux.HandleFunc("/api/kill", s.handleKill)
 mux.HandleFunc("/api/version", s.handleVersion)
 mux.HandleFunc("/api/update/check", s.handleUpdateCheck)
 mux.HandleFunc("/api/update/apply", s.handleUpdateApply)
+mux.HandleFunc("/api/service/restart", s.handleServiceRestart)
 s.httpServer = &http.Server{
 Addr:    config.ServiceAddr(),
 Handler: mux,
@@ -441,5 +442,18 @@ func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// handleServiceRestart responds immediately then restarts the service process.
+func (s *Server) handleServiceRestart(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]string{"status": "restarting"})
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		svcPath, _ := os.Executable()
+		cmd := exec.Command(svcPath, "--run")
+		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+		_ = cmd.Start()
+		os.Exit(0)
+	}()
 }
 

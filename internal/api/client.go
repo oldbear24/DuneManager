@@ -99,6 +99,16 @@ func (c *Client) GetVersion() (string, error) {
 	return v.Version, nil
 }
 
+// RestartService asks the service to restart itself.
+func (c *Client) RestartService() error {
+	resp, err := c.http.Post(c.base+"/api/service/restart", "application/json", nil)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	return nil
+}
+
 // CheckUpdate queries the service for update information.
 func (c *Client) CheckUpdate() (*UpdateCheckResponse, error) {
 	resp, err := c.http.Get(c.base + "/api/update/check")
