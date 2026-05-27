@@ -318,7 +318,8 @@ outputBuf.WriteString(text)
 full := outputBuf.String()
 outputMu.Unlock()
 outputEntry.SetText(full)
-outputScroll.ScrollToBottom()
+// Schedule scroll after Fyne repaints the new content.
+fyne.Do(outputScroll.ScrollToBottom)
 }
 
 func appendHeader(title string) {
