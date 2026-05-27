@@ -156,19 +156,19 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 	case "password-change":
 		execErr = s.execPasswordChange(out, cfg, state, req.Password)
 	case "bg-status":
-		execErr = s.execSSH(cfg, state, "/home/dune/.dune/bin/battlegroup status", out)
+		execErr = s.execBattlegroup(cfg, state, "status", out)
 	case "bg-start":
-		execErr = s.execSSH(cfg, state, "/home/dune/.dune/bin/battlegroup start", out)
+		execErr = s.execBattlegroup(cfg, state, "start", out)
 	case "bg-stop":
-		execErr = s.execSSH(cfg, state, "/home/dune/.dune/bin/battlegroup stop", out)
+		execErr = s.execBattlegroup(cfg, state, "stop", out)
 	case "bg-restart":
-		execErr = s.execSSH(cfg, state, "/home/dune/.dune/bin/battlegroup restart", out)
+		execErr = s.execBattlegroup(cfg, state, "restart", out)
 	case "bg-update":
-		execErr = s.execSSH(cfg, state, "/home/dune/.dune/bin/battlegroup update", out)
+		execErr = s.execBattlegroup(cfg, state, "update", out)
 	case "bg-backup":
-		execErr = s.execSSH(cfg, state, "/home/dune/.dune/bin/battlegroup backup", out)
+		execErr = s.execBattlegroup(cfg, state, "backup", out)
 	case "bg-swap":
-		execErr = s.execSSH(cfg, state, "/home/dune/.dune/bin/battlegroup enable-experimental-swap", out)
+		execErr = s.execBattlegroup(cfg, state, "enable-experimental-swap", out)
 	case "director-port":
 		result, execErr = s.execDirectorPort(out, cfg, state)
 	default:
@@ -237,19 +237,29 @@ func (s *Server) execPS(script string, out func(string)) error {
 }
 
 func (s *Server) execSSH(cfg config.File, state *vm.State, remoteCmd string, out func(string)) error {
+	return s.execSSHWithTTY(cfg, state, remoteCmd, false, out)
+}
+
+func (s *Server) execSSHWithTTY(cfg config.File, state *vm.State, remoteCmd string, forceTTY bool, out func(string)) error {
 	if !state.Running || state.IP == "" {
 		return fmt.Errorf("VM is not running or IP is unavailable")
 	}
-	return s.execCmd(
-		[]string{"ssh",
-			"-o", "StrictHostKeyChecking=no",
-			"-o", "LogLevel=QUIET",
-			"-i", cfg.SSHKeyPath,
-			fmt.Sprintf("dune@%s", state.IP),
-			remoteCmd,
-		},
-		out,
+	args := []string{"ssh"}
+	if forceTTY {
+		args = append(args, "-tt")
+	}
+	args = append(args,
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "LogLevel=QUIET",
+		"-i", cfg.SSHKeyPath,
+		fmt.Sprintf("dune@%s", state.IP),
+		remoteCmd,
 	)
+	return s.execCmd(args, out)
+}
+
+func (s *Server) execBattlegroup(cfg config.File, state *vm.State, subcommand string, out func(string)) error {
+	return s.execSSHWithTTY(cfg, state, "/home/dune/.dune/bin/battlegroup "+subcommand, true, out)
 }
 
 func (s *Server) execVMStart(out func(string), cfg config.File) error {
