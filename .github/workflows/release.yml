@@ -10,6 +10,8 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    env:
+      CGO_ENABLED: "1"
 
     steps:
       - name: Checkout
@@ -24,19 +26,11 @@ jobs:
         run: echo "C:\msys64\ucrt64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Build dune-manager.exe
-        env:
-          GOARCH: amd64
-          GOOS: windows
-          CGO_ENABLED: "1"
         run: |
           go build -ldflags "-H windowsgui -X dune-manager/internal/build.Version=${{ github.ref_name }}" `
             -o dune-manager.exe .
 
       - name: Build dune-manager-svc.exe
-        env:
-          GOARCH: amd64
-          GOOS: windows
-          CGO_ENABLED: "1"
         run: |
           go build -ldflags "-X dune-manager/internal/build.Version=${{ github.ref_name }}" `
             -o dune-manager-svc.exe ./cmd/service
