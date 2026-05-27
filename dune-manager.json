@@ -2,5 +2,6 @@
   "port": 7374,
   "vmName": "dune-awakening",
   "scriptsDir": "D:\\developement\\DuneManager\\bats\\battlegroup-management",
-  "sshKeyPath": "C:\\Users\\david\\AppData\\Local\\DuneAwakeningServer\\sshKey"
+  "sshKeyPath": "C:\\Users\\david\\AppData\\Local\\DuneAwakeningServer\\sshKey",
+  "githubRepo": "oldbear24/DuneManager"
 }
