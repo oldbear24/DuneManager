@@ -136,6 +136,7 @@ ipLabel,
 layout.NewSpacer(),
 updateBtn,
 widget.NewButton("⟳ Refresh", func() { go refreshStatus() }),
+widget.NewButton("🔍 Check updates", func() { go cmdCheckUpdate() }),
 widget.NewButton("⚙ Settings", cmdSettings),
 )
 }
@@ -535,10 +536,10 @@ dialog.ShowInformation("Saved",
 },
 OnCancel: func() {},
 }
-// Wrap in a fixed-width container so long paths don't get clipped.
-content := container.New(layout.NewGridWrapLayout(fyne.NewSize(520, 0)), form)
-d := dialog.NewCustom("Settings", "Cancel", content, mainWindow)
-d.Resize(fyne.NewSize(560, 0))
+scroll := container.NewVScroll(form)
+scroll.SetMinSize(fyne.NewSize(520, 420))
+d := dialog.NewCustom("Settings", "Cancel", scroll, mainWindow)
+d.Resize(fyne.NewSize(580, 500))
 d.Show()
 }
 
@@ -553,6 +554,25 @@ func checkForUpdateBackground() {
 	updateGUIURL = info.GUIURL
 	updateBtn.SetText(fmt.Sprintf("⬆ Update %s", info.Latest))
 	updateBtn.Show()
+}
+
+// cmdCheckUpdate is triggered by the manual "Check updates" button.
+func cmdCheckUpdate() {
+	info, err := svcClient.CheckUpdate()
+	if err != nil {
+		dialog.ShowError(err, mainWindow)
+		return
+	}
+	if !info.HasUpdate {
+		dialog.ShowInformation("Up to date", "You are running the latest version.", mainWindow)
+		return
+	}
+	updateGUIURL = info.GUIURL
+	updateBtn.SetText(fmt.Sprintf("⬆ Update %s", info.Latest))
+	updateBtn.Show()
+	dialog.ShowInformation("Update available",
+		fmt.Sprintf("Version %s is available.\nClick the update button in the status bar to apply.", info.Latest),
+		mainWindow)
 }
 
 // cmdApplyUpdate is triggered when the user clicks the update button.
