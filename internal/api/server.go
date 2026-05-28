@@ -357,19 +357,43 @@ func (s *Server) execBattlegroup(cfg config.File, state *vm.State, subcommand st
 	logging.Infof("battlegroup: cmd=%s vmRunning=%v ip=%s keyPath=%s", subcommand, state.Running, state.IP, cfg.SSHKeyPath)
 	remoteCmd := fmt.Sprintf("TERM=dumb /home/dune/.dune/bin/battlegroup %s 2>&1", subcommand)
 	hasOutput := false
+	var lastLines []string // keep a rolling window to detect success markers
 	err := s.execSSH(cfg, state, remoteCmd, func(line string) {
 		stripped := stripANSI(line)
 		if strings.TrimSpace(stripped) != "" {
 			hasOutput = true
+			lastLines = append(lastLines, strings.ToLower(stripped))
 		}
 		logging.Infof("battlegroup output: %s", strings.TrimRight(stripped, "\n"))
 		out(stripped)
 	})
 	logging.Infof("battlegroup: cmd=%s done err=%v hasOutput=%v", subcommand, err, hasOutput)
+
+	// bg-update exits with status 1 when `ln` fails because symlinks already
+	// exist — the update itself succeeded. Suppress the exit error when the
+	// output contains an unambiguous success marker.
+	if err != nil && subcommand == "update" && isBGUpdateSuccess(lastLines) {
+		logging.Infof("battlegroup: update exit error suppressed (ln symlink race, update succeeded)")
+		err = nil
+	}
+
 	if err == nil && !hasOutput {
 		out(fmt.Sprintf("(battlegroup %s returned no output)\n", subcommand))
 	}
 	return err
+}
+
+// isBGUpdateSuccess returns true when the collected output lines contain at
+// least one indicator that the battlegroup update completed successfully.
+func isBGUpdateSuccess(lines []string) bool {
+	for _, l := range lines {
+		if strings.Contains(l, "finished updating battlegroup") ||
+			strings.Contains(l, "already up to date") ||
+			strings.Contains(l, "finished loading battlegroup images") {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) execVMStart(out func(string), cfg config.File) error {
