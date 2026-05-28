@@ -16,10 +16,16 @@ type File struct {
 	SSHKeyPath string `json:"sshKeyPath"`
 
 	// Discord bot — all optional. Bot is disabled when DiscordToken is empty.
-	DiscordToken     string `json:"discordToken,omitempty"`
-	DiscordGuildID   string `json:"discordGuildID,omitempty"`
-	DiscordChannelID string `json:"discordChannelID,omitempty"`
-	DiscordRoleID    string `json:"discordRoleID,omitempty"`
+	DiscordToken           string `json:"discordToken,omitempty"`
+	DiscordGuildID         string `json:"discordGuildID,omitempty"`
+	DiscordChannelID       string `json:"discordChannelID,omitempty"`
+	DiscordRoleID          string `json:"discordRoleID,omitempty"`
+	DiscordStatusChannelID string `json:"discordStatusChannelID,omitempty"`
+
+	// DiscordStatusMsgID is written by the service when the status embed is
+	// first posted, so restarts edit the same message instead of reposting.
+	// The GUI preserves this unless the status channel is changed.
+	DiscordStatusMsgID string `json:"discordStatusMsgID,omitempty"`
 
 	// Auto-update — set to "owner/repo" to enable GitHub release checks.
 	GitHubRepo string `json:"githubRepo,omitempty"`
@@ -124,6 +130,20 @@ func Save() error {
 	mu.RLock()
 	f := current
 	mu.RUnlock()
+	data, err := json.MarshalIndent(f, "", "  ")
+	if err != nil {
+		return err
+	}
+	_ = os.MkdirAll(filepath.Dir(filePath), 0755)
+	return os.WriteFile(filePath, data, 0644)
+}
+
+// SaveStatusMsgID atomically updates DiscordStatusMsgID in memory and on disk.
+func SaveStatusMsgID(msgID string) error {
+	mu.Lock()
+	current.DiscordStatusMsgID = msgID
+	f := current
+	mu.Unlock()
 	data, err := json.MarshalIndent(f, "", "  ")
 	if err != nil {
 		return err

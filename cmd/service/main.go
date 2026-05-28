@@ -144,7 +144,7 @@ func startDiscordBot() *discord.Bot {
 		logging.Infof("Discord bot disabled")
 		return nil
 	}
-	bot, err := discord.New(cfg.DiscordToken, cfg.DiscordGuildID, cfg.DiscordChannelID, cfg.DiscordRoleID)
+	bot, err := discord.New(cfg.DiscordToken, cfg.DiscordGuildID, cfg.DiscordChannelID, cfg.DiscordRoleID, cfg.DiscordStatusChannelID)
 	if err != nil {
 		logging.Errorf("Discord bot failed to create session: %v", err)
 		return nil

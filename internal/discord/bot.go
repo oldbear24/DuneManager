@@ -15,29 +15,36 @@ const maxMsgLen = 1900 // Discord cap is 2000; leave margin for formatting
 
 // Bot wraps a discordgo session and routes slash commands to the HTTP service.
 type Bot struct {
-	dg       *discordgo.Session
-	client   *api.Client
-	guildID  string
-	chanID   string
-	roleID   string
-	commands []*discordgo.ApplicationCommand
+	dg           *discordgo.Session
+	client       *api.Client
+	pollerClient *api.Client
+	guildID      string
+	chanID       string // command restriction channel
+	roleID       string
+	statusChanID string // channel for the live status embed
+	commands     []*discordgo.ApplicationCommand
+	pollerStop   chan struct{}
+	statusMsgID  string
 }
 
 // New creates a Bot but does not connect yet.
 // guildID: register commands for this guild only (instant); empty = global (up to 1h delay).
 // channelID: restrict commands to this channel; empty = allow everywhere.
 // roleID: restrict bot use to members who have this role; empty = allow all members.
-func New(token, guildID, channelID, roleID string) (*Bot, error) {
+// statusChannelID: post/edit the live status embed in this channel; empty = no embed.
+func New(token, guildID, channelID, roleID, statusChannelID string) (*Bot, error) {
 	dg, err := discordgo.New("Bot " + token)
 	if err != nil {
 		return nil, fmt.Errorf("discord session: %w", err)
 	}
 	return &Bot{
-		dg:      dg,
-		client:  api.NewClient(),
-		guildID: guildID,
-		chanID:  channelID,
-		roleID:  roleID,
+		dg:           dg,
+		client:       api.NewClient(),
+		pollerClient: api.NewClientWithTimeout(45 * time.Second),
+		guildID:      guildID,
+		chanID:       channelID,
+		roleID:       roleID,
+		statusChanID: statusChannelID,
 	}, nil
 }
 
@@ -114,11 +121,15 @@ func (b *Bot) Start() error {
 		}
 		b.commands = append(b.commands, cmd)
 	}
+	if b.statusChanID != "" {
+		b.startPoller()
+	}
 	return nil
 }
 
-// Stop removes registered commands and closes the session.
+// Stop removes registered commands, stops the poller, and closes the session.
 func (b *Bot) Stop() {
+	b.stopPoller()
 	appID := b.dg.State.User.ID
 	for _, cmd := range b.commands {
 		_ = b.dg.ApplicationCommandDelete(appID, b.guildID, cmd.ID)
@@ -183,6 +194,15 @@ func (b *Bot) onInteraction(s *discordgo.Session, i *discordgo.InteractionCreate
 	}
 }
 
+const maxTextLen = 3800 // conservative limit for a single TextDisplay
+
+const (
+	accentGreen  = 0x00C850
+	accentOrange = 0xC87800
+	accentRed    = 0xC82828
+	accentGrey   = 0x787878
+)
+
 // ── command handlers ──────────────────────────────────────────────────────────
 
 func (b *Bot) handleStatus(s *discordgo.Session, i *discordgo.InteractionCreate) {
@@ -190,53 +210,56 @@ func (b *Bot) handleStatus(s *discordgo.Session, i *discordgo.InteractionCreate)
 
 	status, err := b.client.GetStatus()
 	if err != nil {
-		_, _ = s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-			Content: fmt.Sprintf("❌ Service offline: %v", err),
-		})
+		_, _ = s.FollowupMessageCreate(i.Interaction, true, v2Followup(
+			v2Container(accentRed,
+				v2Text("## 🏜️ Server Status"),
+				v2Sep(),
+				v2Text("🔴 **Service offline**: "+err.Error()),
+			),
+		))
 		return
 	}
 
-	vmState := status.VMState
-	if status.Running {
-		vmState = "Running ✅"
-	} else if vmState == "Off" {
-		vmState = "Off 🟠"
-	} else if vmState == "missing" {
-		vmState = "Not installed ❌"
+	var stateLine string
+	accent := accentGrey
+	switch {
+	case status.Running:
+		stateLine = "🟢 **Running**"
+		accent = accentGreen
+	case status.VMState == "Off":
+		stateLine = "🟠 **VM Off**"
+		accent = accentOrange
+	case status.VMState == "missing":
+		stateLine = "❌ **VM not installed**"
+		accent = accentRed
+	default:
+		stateLine = "⚪ " + status.VMState
 	}
 
-	ip := status.IP
-	if ip == "" {
-		ip = "—"
-	}
-	busy := "No"
+	busy := ""
 	if status.Busy {
-		busy = "Yes ⏳"
+		busy = "\n⏳ A command is currently running."
 	}
 
-	_, _ = s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-		Embeds: []*discordgo.MessageEmbed{
-			{
-				Title: "🏜️ Dune Server Status",
-				Color: embedColor(status),
-				Fields: []*discordgo.MessageEmbedField{
-					{Name: "VM State", Value: vmState, Inline: true},
-					{Name: "IP", Value: ip, Inline: true},
-					{Name: "Busy", Value: busy, Inline: true},
-				},
-			},
-		},
-	})
+	_, _ = s.FollowupMessageCreate(i.Interaction, true, v2Followup(
+		v2Container(accent,
+			v2Text("## 🏜️ Server Status"),
+			v2Sep(),
+			v2Text(stateLine+busy),
+		),
+	))
 }
 
 func (b *Bot) handleExec(s *discordgo.Session, i *discordgo.InteractionCreate, req api.ExecRequest, title string) {
 	_ = s.InteractionRespond(i.Interaction, deferredResponse())
 
-	// Send initial placeholder; keep the message ID for live edits.
-	initialContent := fmt.Sprintf("⏳ **%s** running…", title)
-	msg, err := s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-		Content: initialContent,
-	})
+	msg, err := s.FollowupMessageCreate(i.Interaction, true, v2Followup(
+		v2Container(accentOrange,
+			v2Text("## ⏳ "+title),
+			v2Sep(),
+			v2Text("*Running…*"),
+		),
+	))
 	msgID := ""
 	if err == nil {
 		msgID = msg.ID
@@ -247,47 +270,71 @@ func (b *Bot) handleExec(s *discordgo.Session, i *discordgo.InteractionCreate, r
 
 	onLine := func(line string) {
 		buf.WriteString(line)
-		// Rate-limit live edits to once every 2 seconds.
 		if msgID == "" || time.Since(lastEdit) < 2*time.Second {
 			return
 		}
 		lastEdit = time.Now()
-		content := fmtOutput(title+" (running…)", buf.String())
+		comps := []discordgo.MessageComponent{
+			v2Container(accentOrange,
+				v2Text("## ⏳ "+title),
+				v2Sep(),
+				v2Text("```\n"+truncateTail(buf.String(), maxTextLen)+"\n```"),
+			),
+		}
 		_, _ = s.FollowupMessageEdit(i.Interaction, msgID, &discordgo.WebhookEdit{
-			Content: &content,
+			Components: &comps,
 		})
 	}
 
 	_, execErr := b.client.Exec(req, onLine)
 
-	var finalContent string
+	var finalComps []discordgo.MessageComponent
 	if execErr != nil {
-		finalContent = fmt.Sprintf("❌ **%s** failed\n```\n%s\nError: %v\n```",
-			title, truncateTail(buf.String(), maxMsgLen-200), execErr)
+		finalComps = []discordgo.MessageComponent{
+			v2Container(accentRed,
+				v2Text("## ❌ "+title+" — failed"),
+				v2Sep(),
+				v2Text("```\n"+truncateTail(buf.String(), maxTextLen-100)+"\n```\n**Error:** "+execErr.Error()),
+			),
+		}
 	} else {
-		finalContent = fmtOutput("✅ "+title+" done", buf.String())
+		out := strings.TrimSpace(buf.String())
+		body := "*No output.*"
+		if out != "" {
+			body = "```\n" + truncateTail(out, maxTextLen) + "\n```"
+		}
+		finalComps = []discordgo.MessageComponent{
+			v2Container(accentGreen,
+				v2Text("## ✅ "+title),
+				v2Sep(),
+				v2Text(body),
+			),
+		}
 	}
 
 	if msgID != "" {
 		_, _ = s.FollowupMessageEdit(i.Interaction, msgID, &discordgo.WebhookEdit{
-			Content: &finalContent,
+			Components: &finalComps,
 		})
 	} else {
-		_, _ = s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-			Content: finalContent,
-		})
+		_, _ = s.FollowupMessageCreate(i.Interaction, true, v2Followup(finalComps...))
 	}
 }
 
 func (b *Bot) handleKill(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	err := b.client.Kill()
-	content := "⏹ Kill signal sent."
+	accent := accentGrey
+	text := "⏹ **Kill signal sent.**"
 	if err != nil {
-		content = fmt.Sprintf("❌ Kill failed: %v", err)
+		accent = accentRed
+		text = "❌ Kill failed: " + err.Error()
 	}
 	_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{Content: content},
+		Data: &discordgo.InteractionResponseData{
+			Flags:      discordgo.MessageFlagsIsComponentsV2 | discordgo.MessageFlagsEphemeral,
+			Components: []discordgo.MessageComponent{v2Container(accent, v2Text(text))},
+		},
 	})
 }
 
@@ -296,11 +343,36 @@ func (b *Bot) handleKill(s *discordgo.Session, i *discordgo.InteractionCreate) {
 func deferredResponse() *discordgo.InteractionResponse {
 	return &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Flags: discordgo.MessageFlagsEphemeral,
+		},
 	}
 }
 
-func fmtOutput(title, output string) string {
-	return fmt.Sprintf("**%s**\n```\n%s\n```", title, truncateTail(output, maxMsgLen))
+// v2Container wraps components in a Container with an accent colour bar.
+func v2Container(accent int, children ...discordgo.MessageComponent) *discordgo.Container {
+	return &discordgo.Container{
+		AccentColor: &accent,
+		Components:  children,
+	}
+}
+
+// v2Text returns a TextDisplay component.
+func v2Text(content string) *discordgo.TextDisplay {
+	return &discordgo.TextDisplay{Content: content}
+}
+
+// v2Sep returns a Separator with a visible divider line.
+func v2Sep() *discordgo.Separator {
+	return &discordgo.Separator{}
+}
+
+// v2Followup builds a WebhookParams ready for FollowupMessageCreate with Components V2 (ephemeral).
+func v2Followup(comps ...discordgo.MessageComponent) *discordgo.WebhookParams {
+	return &discordgo.WebhookParams{
+		Flags:      discordgo.MessageFlagsIsComponentsV2 | discordgo.MessageFlagsEphemeral,
+		Components: comps,
+	}
 }
 
 // truncateTail keeps the last `max` bytes of s, prepending a marker if cut.
@@ -310,7 +382,6 @@ func truncateTail(s string, max int) string {
 		return s
 	}
 	cut := s[len(s)-max:]
-	// Align to a newline so we don't split mid-line.
 	if idx := strings.Index(cut, "\n"); idx >= 0 {
 		cut = cut[idx+1:]
 	}
@@ -324,19 +395,6 @@ func optString(opts []*discordgo.ApplicationCommandInteractionDataOption, name s
 		}
 	}
 	return ""
-}
-
-func embedColor(s *api.StatusResponse) int {
-	switch {
-	case s.Running:
-		return 0x00C850
-	case s.VMState == "Off":
-		return 0xC87800
-	case s.VMState == "missing":
-		return 0xC82828
-	default:
-		return 0x787878
-	}
 }
 
 func (b *Bot) memberAllowed(member *discordgo.Member) bool {

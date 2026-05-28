@@ -520,14 +520,16 @@ func cmdSettings() {
 	discordChanEntry := widget.NewEntry()
 	discordChanEntry.SetPlaceHolder("(optional — restrict commands to this channel ID)")
 	discordChanEntry.SetText(cfg.DiscordChannelID)
-	discordRoleSelect := widget.NewSelect(nil, nil)
-	discordRoleStatus := widget.NewLabel("")
-	discordRoleStatus.Wrapping = fyne.TextWrapWord
-	refreshRolesBtn := widget.NewButton("Load Roles", nil)
 
 	githubRepoEntry := widget.NewEntry()
 	githubRepoEntry.SetPlaceHolder("owner/repo — e.g. alice/dune-manager")
 	githubRepoEntry.SetText(cfg.GitHubRepo)
+
+	// ── Role picker ─────────────────────────────────────────────────────────
+	discordRoleSelect := widget.NewSelect(nil, nil)
+	discordRoleStatus := widget.NewLabel("")
+	discordRoleStatus.Wrapping = fyne.TextWrapWord
+	refreshRolesBtn := widget.NewButton("Load Roles", nil)
 
 	const anyRoleLabel = "Any role (no restriction)"
 	roleLabelByID := map[string]string{"": anyRoleLabel}
@@ -562,19 +564,69 @@ func cmdSettings() {
 	}
 	discordRoleStatus.SetText("Enter Discord token and guild ID, then load roles to restrict bot access.")
 
-	invalidateRoles := func() {
+	// ── Status channel picker ────────────────────────────────────────────────
+	discordStatusChanSelect := widget.NewSelect(nil, nil)
+	discordStatusChanSelect.PlaceHolder = "(select a channel for the live status embed)"
+	discordStatusChanStatus := widget.NewLabel("")
+	discordStatusChanStatus.Wrapping = fyne.TextWrapWord
+	refreshChanBtn := widget.NewButton("Load Channels", nil)
+
+	chanLabelByID := map[string]string{}
+	chanIDByLabel := map[string]string{}
+	selectedStatusChanID := cfg.DiscordStatusChannelID
+
+	setChannelOptions := func(channels []discord.Channel) {
+		labels := []string{}
+		chanLabelByID = map[string]string{}
+		chanIDByLabel = map[string]string{}
+		for _, ch := range channels {
+			var label string
+			if ch.CategoryName != "" {
+				label = fmt.Sprintf("[%s] #%s (%s)", ch.CategoryName, ch.Name, ch.ID)
+			} else {
+				label = fmt.Sprintf("#%s (%s)", ch.Name, ch.ID)
+			}
+			chanLabelByID[ch.ID] = label
+			chanIDByLabel[label] = ch.ID
+			labels = append(labels, label)
+		}
+		if selectedStatusChanID != "" {
+			if _, ok := chanLabelByID[selectedStatusChanID]; !ok {
+				label := fmt.Sprintf("Configured channel (%s)", selectedStatusChanID)
+				chanLabelByID[selectedStatusChanID] = label
+				chanIDByLabel[label] = selectedStatusChanID
+				labels = append([]string{label}, labels...)
+			}
+		}
+		discordStatusChanSelect.Options = labels
+		discordStatusChanSelect.Refresh()
+		if lbl, ok := chanLabelByID[selectedStatusChanID]; ok {
+			discordStatusChanSelect.SetSelected(lbl)
+		}
+	}
+	setChannelOptions(nil)
+	discordStatusChanSelect.OnChanged = func(label string) {
+		selectedStatusChanID = chanIDByLabel[label]
+	}
+	discordStatusChanStatus.SetText("Load channels to select where the auto-updating status embed is posted.")
+
+	// ── Shared invalidate (called when token/guild changes) ──────────────────
+	invalidate := func() {
 		selectedRoleID = ""
 		setRoleOptions(nil)
 		discordRoleStatus.SetText("Discord token or guild changed. Load roles again to choose an allowed role.")
+		selectedStatusChanID = ""
+		setChannelOptions(nil)
+		discordStatusChanStatus.SetText("Discord token or guild changed. Load channels again.")
 	}
-	discordTokenEntry.OnChanged = func(string) { invalidateRoles() }
-	discordGuildEntry.OnChanged = func(string) { invalidateRoles() }
+	discordTokenEntry.OnChanged = func(string) { invalidate() }
+	discordGuildEntry.OnChanged = func(string) { invalidate() }
 
 	loadRoles := func(showErr bool) {
 		token := strings.TrimSpace(discordTokenEntry.Text)
 		guildID := strings.TrimSpace(discordGuildEntry.Text)
 		if token == "" || guildID == "" {
-			invalidateRoles()
+			invalidate()
 			return
 		}
 		refreshRolesBtn.Disable()
@@ -606,6 +658,38 @@ func cmdSettings() {
 		discordRoleStatus,
 	)
 
+	loadChannels := func(showErr bool) {
+		token := strings.TrimSpace(discordTokenEntry.Text)
+		guildID := strings.TrimSpace(discordGuildEntry.Text)
+		if token == "" || guildID == "" {
+			discordStatusChanStatus.SetText("Enter Discord token and guild ID first.")
+			return
+		}
+		refreshChanBtn.Disable()
+		discordStatusChanStatus.SetText("Loading Discord channels…")
+		go func(token, guildID string) {
+			channels, err := discord.ListChannels(token, guildID)
+			fyne.Do(func() {
+				refreshChanBtn.Enable()
+				if err != nil {
+					setChannelOptions(nil)
+					discordStatusChanStatus.SetText("Could not load Discord channels. Check the token and guild ID.")
+					if showErr {
+						dialog.ShowError(err, mainWindow)
+					}
+					return
+				}
+				setChannelOptions(channels)
+				discordStatusChanStatus.SetText(fmt.Sprintf("Loaded %d text channels.", len(channels)))
+			})
+		}(token, guildID)
+	}
+	refreshChanBtn.OnTapped = func() { loadChannels(true) }
+	statusChanSelector := container.NewVBox(
+		container.NewBorder(nil, nil, nil, refreshChanBtn, discordStatusChanSelect),
+		discordStatusChanStatus,
+	)
+
 	form := &widget.Form{
 		Items: []*widget.FormItem{
 			{Text: "Service Port", Widget: portEntry},
@@ -616,6 +700,7 @@ func cmdSettings() {
 			{Text: "Discord Guild ID", Widget: discordGuildEntry},
 			{Text: "Discord Channel ID", Widget: discordChanEntry},
 			{Text: "Discord Role", Widget: roleSelector},
+			{Text: "Status Channel", Widget: statusChanSelector},
 			{Text: "GitHub Repo", Widget: githubRepoEntry},
 		},
 		OnSubmit: func() {
@@ -624,16 +709,24 @@ func cmdSettings() {
 				dialog.ShowInformation("Error", "Port must be a number between 1 and 65535.", mainWindow)
 				return
 			}
+			// Preserve message ID when channel unchanged; clear it to force repost on channel change.
+			existingCfg := config.Get()
+			statusMsgID := existingCfg.DiscordStatusMsgID
+			if selectedStatusChanID != existingCfg.DiscordStatusChannelID {
+				statusMsgID = ""
+			}
 			config.Set(config.File{
-				Port:             port,
-				VMName:           vmNameEntry.Text,
-				ScriptsDir:       scriptsDirEntry.Text,
-				SSHKeyPath:       sshKeyEntry.Text,
-				DiscordToken:     discordTokenEntry.Text,
-				DiscordGuildID:   discordGuildEntry.Text,
-				DiscordChannelID: discordChanEntry.Text,
-				DiscordRoleID:    strings.TrimSpace(selectedRoleID),
-				GitHubRepo:       githubRepoEntry.Text,
+				Port:                   port,
+				VMName:                 vmNameEntry.Text,
+				ScriptsDir:             scriptsDirEntry.Text,
+				SSHKeyPath:             sshKeyEntry.Text,
+				DiscordToken:           discordTokenEntry.Text,
+				DiscordGuildID:         discordGuildEntry.Text,
+				DiscordChannelID:       discordChanEntry.Text,
+				DiscordRoleID:          strings.TrimSpace(selectedRoleID),
+				DiscordStatusChannelID: selectedStatusChanID,
+				DiscordStatusMsgID:     statusMsgID,
+				GitHubRepo:             githubRepoEntry.Text,
 			})
 			if err := config.Save(); err != nil {
 				dialog.ShowError(err, mainWindow)
@@ -652,6 +745,7 @@ func cmdSettings() {
 	d.Show()
 	if strings.TrimSpace(cfg.DiscordToken) != "" && strings.TrimSpace(cfg.DiscordGuildID) != "" {
 		loadRoles(false)
+		loadChannels(false)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/oldbear24/DuneManager/internal/config"
 )
@@ -23,6 +24,15 @@ func NewClient() *Client {
 	return &Client{
 		base: "http://" + config.ServiceAddr(),
 		http: &http.Client{}, // zero Timeout = no timeout (streaming needs this)
+	}
+}
+
+// NewClientWithTimeout builds a client with a hard HTTP deadline.
+// Use for short-lived requests (status polls) that should not block indefinitely.
+func NewClientWithTimeout(d time.Duration) *Client {
+	return &Client{
+		base: "http://" + config.ServiceAddr(),
+		http: &http.Client{Timeout: d},
 	}
 }
 
