@@ -27,6 +27,14 @@ type VersionResponse struct {
 	Version string `json:"version"`
 }
 
+// UpdateApplyRequest is the optional body sent with POST /api/update/apply.
+// The GUI provides its own PID and executable path so the service can stage
+// an elevated helper to replace the GUI binary as well.
+type UpdateApplyRequest struct {
+	GUIPid  int    `json:"guiPid,omitempty"`
+	GUIPath string `json:"guiPath,omitempty"`
+}
+
 // UpdateCheckResponse is returned by GET /api/update/check.
 type UpdateCheckResponse struct {
 	Current   string `json:"current"`

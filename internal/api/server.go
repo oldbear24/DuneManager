@@ -669,6 +669,12 @@ func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
+	// Parse optional GUI info from request body.
+	var req UpdateApplyRequest
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -708,7 +714,7 @@ func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 	logging.Infof("service update available: %s -> %s", info.Current, info.Latest)
 	emit("output", fmt.Sprintf("Update available: %s → %s\n", info.Current, info.Latest))
 
-	// Download service binary.
+	// Download and stage service binary update.
 	if info.SvcURL != "" {
 		emit("output", "Downloading service binary...\n")
 		tmpSvc, err := updater.DownloadToTemp(info.SvcURL, func(dl, total int64) {
@@ -740,15 +746,47 @@ func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 		emit("output", "Service update staged.\n")
 	}
 
-	// Return GUI download URL in done.Line so the GUI can self-update.
-	emit("output", "Service update complete. Restarting...\n")
-	doneEv, _ := json.Marshal(SSEEvent{Type: "done", Line: info.GUIURL})
+	// Download and stage GUI binary update using the elevated service context
+	// so the helper runs with sufficient privileges regardless of how the GUI
+	// was launched.
+	if info.GUIURL != "" && req.GUIPath != "" && req.GUIPid > 0 {
+		emit("output", "Downloading GUI binary...\n")
+		tmpGUI, err := updater.DownloadToTemp(info.GUIURL, func(dl, total int64) {
+			if total > 0 {
+				emit("output", fmt.Sprintf("  %.0f%%\n", float64(dl)/float64(total)*100))
+			}
+		})
+		if err != nil {
+			logging.Errorf("GUI update download failed: %v", err)
+			ev, _ := json.Marshal(SSEEvent{Type: "done", Error: "download gui: " + err.Error()})
+			fmt.Fprintf(w, "data: %s\n\n", ev)
+			return
+		}
+		emit("output", "Staging GUI update...\n")
+		if err := updater.LaunchHelper(updater.HelperPlan{
+			WaitPID:     req.GUIPid,
+			SourcePath:  tmpGUI,
+			TargetPath:  req.GUIPath,
+			RestartPath: req.GUIPath,
+			HideWindow:  false,
+		}); err != nil {
+			logging.Errorf("GUI update apply failed: %v", err)
+			ev, _ := json.Marshal(SSEEvent{Type: "done", Error: "apply gui: " + err.Error()})
+			fmt.Fprintf(w, "data: %s\n\n", ev)
+			return
+		}
+		logging.Infof("GUI update handed off to updater helper")
+		emit("output", "GUI update staged.\n")
+	}
+
+	emit("output", "Update complete. Restarting...\n")
+	doneEv, _ := json.Marshal(SSEEvent{Type: "done"})
 	fmt.Fprintf(w, "data: %s\n\n", doneEv)
 	if flusher != nil {
 		flusher.Flush()
 	}
 
-	// Restart the service after a short delay so the HTTP response is fully sent.
+	// Exit after a short delay so the HTTP response is fully sent.
 	go func() {
 		defer s.endExclusive()
 		time.Sleep(2 * time.Second)

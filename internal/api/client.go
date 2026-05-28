@@ -140,19 +140,21 @@ func (c *Client) CheckUpdate() (*UpdateCheckResponse, error) {
 	return &u, nil
 }
 
-// ApplyServiceUpdate streams the service update over SSE.
-// Returns the GUI download URL (may be empty) when done.
-func (c *Client) ApplyServiceUpdate(onLine func(string)) (string, error) {
-	resp, err := c.http.Post(c.base+"/api/update/apply", "application/json", nil)
+// ApplyServiceUpdate streams the service+GUI update over SSE.
+// guiPid and guiPath are the current GUI process ID and executable path; they
+// allow the elevated service to stage a helper that replaces the GUI binary too.
+func (c *Client) ApplyServiceUpdate(guiPid int, guiPath string, onLine func(string)) error {
+	body, _ := json.Marshal(UpdateApplyRequest{GUIPid: guiPid, GUIPath: guiPath})
+	resp, err := c.http.Post(c.base+"/api/update/apply", "application/json", bytes.NewReader(body))
 	if err != nil {
-		return "", err
+		return err
 	}
 	defer resp.Body.Close()
 	if err := responseError(resp); err != nil {
-		return "", err
+		return err
 	}
 
-	var lastResult, lastErr string
+	var lastErr string
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
 		raw := scanner.Text()
@@ -167,14 +169,13 @@ func (c *Client) ApplyServiceUpdate(onLine func(string)) (string, error) {
 		case "output":
 			onLine(evt.Line)
 		case "done":
-			lastResult = evt.Line
 			lastErr = evt.Error
 		}
 	}
 	if lastErr != "" {
-		return "", fmt.Errorf("%s", lastErr)
+		return fmt.Errorf("%s", lastErr)
 	}
-	return lastResult, nil
+	return nil
 }
 
 func responseError(resp *http.Response) error {

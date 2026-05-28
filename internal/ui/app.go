@@ -21,7 +21,6 @@ import (
 	"github.com/oldbear24/DuneManager/internal/config"
 	"github.com/oldbear24/DuneManager/internal/discord"
 	"github.com/oldbear24/DuneManager/internal/runner"
-	"github.com/oldbear24/DuneManager/internal/updater"
 	"github.com/oldbear24/DuneManager/internal/winsvc"
 )
 
@@ -47,8 +46,7 @@ var (
 	killBtn *widget.Button
 
 	// update button shown in status bar when a newer version is available
-	updateBtn    *widget.Button
-	updateGUIURL string // stored GUI download URL when update is ready
+	updateBtn *widget.Button
 
 	// service start/restart button in status bar
 	restartSvcBtn *widget.Button
@@ -823,7 +821,6 @@ func cmdCheckUpdate() {
 		return
 	}
 	fyne.Do(func() {
-		updateGUIURL = info.GUIURL
 		updateBtn.SetText(fmt.Sprintf("⬆ Update %s", info.Latest))
 		updateBtn.Show()
 		dialog.ShowInformation("Update available",
@@ -842,42 +839,16 @@ func cmdApplyUpdate() {
 			}
 			tryExec(func() {
 				appendHeader("Apply Update")
-				guiURL, err := svcClient.ApplyServiceUpdate(appendOutput)
-				if err != nil {
-					appendOutput(fmt.Sprintf("Error: %v\n", err))
-					return
-				}
-				// Now update the GUI binary if a URL was returned.
-				if guiURL == "" {
-					appendOutput("Service updated. No GUI update available.\n")
-					return
-				}
-				appendOutput("Downloading GUI update...\n")
-				tmpGUI, err := updater.DownloadToTemp(guiURL, func(dl, total int64) {
-					if total > 0 {
-						appendOutput(fmt.Sprintf("  %.0f%%\n", float64(dl)/float64(total)*100))
-					}
-				})
-				if err != nil {
-					appendOutput(fmt.Sprintf("GUI download failed: %v\n", err))
-					return
-				}
-				appendOutput("Applying GUI update...\n")
 				guiPath, err := os.Executable()
 				if err != nil {
 					appendOutput(fmt.Sprintf("Cannot determine executable path: %v\n", err))
 					return
 				}
-				if err := updater.LaunchHelper(updater.HelperPlan{
-					WaitPID:     os.Getpid(),
-					SourcePath:  tmpGUI,
-					TargetPath:  guiPath,
-					RestartPath: guiPath,
-				}); err != nil {
-					appendOutput(fmt.Sprintf("GUI apply failed: %v\n", err))
+				if err := svcClient.ApplyServiceUpdate(os.Getpid(), guiPath, appendOutput); err != nil {
+					appendOutput(fmt.Sprintf("Error: %v\n", err))
 					return
 				}
-				appendOutput("GUI update staged. Restarting...\n")
+				appendOutput("Update staged. Restarting GUI...\n")
 				time.Sleep(500 * time.Millisecond)
 				fyne.Do(func() {
 					fyneApp.Quit()
