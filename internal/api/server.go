@@ -1,10 +1,13 @@
 package api
 
 import (
+	"bufio"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -14,6 +17,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/oldbear24/DuneManager/internal/build"
 	"github.com/oldbear24/DuneManager/internal/config"
@@ -156,7 +161,7 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 	case "vm-stop":
 		execErr = s.execVMStop(out, cfg)
 	case "ssh-rotate":
-		execErr = s.execSSHRotate(out, cfg, state)
+		execErr = s.execSSHRotate(out, cfg, state, req.Password)
 	case "password-change":
 		execErr = s.execPasswordChange(out, cfg, state, req.Password)
 	case "bg-status":
@@ -247,36 +252,124 @@ func (s *Server) execPS(script string, out func(string)) error {
 }
 
 func (s *Server) execSSH(cfg config.File, state *vm.State, remoteCmd string, out func(string)) error {
-	return s.execSSHWithTTY(cfg, state, remoteCmd, false, out)
-}
-
-func (s *Server) execSSHWithTTY(cfg config.File, state *vm.State, remoteCmd string, forceTTY bool, out func(string)) error {
 	if !state.Running || state.IP == "" {
 		return fmt.Errorf("VM is not running or IP is unavailable")
 	}
-	args := []string{"ssh"}
-	if forceTTY {
-		args = append(args, "-tt")
+	return execSSHWithKey(state.IP, cfg.SSHKeyPath, remoteCmd, out)
+}
+
+// execSSHWithPassword connects to the VM using password authentication (Go
+// native SSH, no subprocess) and streams the remote command output to out.
+// Used for initial key installation before any key file exists.
+func execSSHWithPassword(ip, password, remoteCmd string, out func(string)) error {
+	cfg := &gossh.ClientConfig{
+		User:            "dune",
+		Auth:            []gossh.AuthMethod{gossh.Password(password)},
+		HostKeyCallback: gossh.InsecureIgnoreHostKey(), //nolint:gosec
+		Timeout:         15 * time.Second,
 	}
-	args = append(args,
-		"-o", "StrictHostKeyChecking=no",
-		"-o", "LogLevel=QUIET",
-		"-o", "ConnectTimeout=10",
-		"-i", cfg.SSHKeyPath,
-		fmt.Sprintf("dune@%s", state.IP),
-		remoteCmd,
-	)
-	return s.execCmdWithOptions(args, out, !forceTTY)
+	return execGoSSH(ip, cfg, remoteCmd, out)
+}
+
+// execSSHWithKey connects to the VM using public key authentication (Go native
+// SSH, no subprocess). This avoids subprocess/service-context issues where the
+// ssh.exe subprocess can hang waiting for interactive password input.
+func execSSHWithKey(ip, keyPath, remoteCmd string, out func(string)) error {
+	keyData, err := os.ReadFile(keyPath)
+	if err != nil {
+		return fmt.Errorf("read SSH key %s: %w", keyPath, err)
+	}
+	signer, err := gossh.ParsePrivateKey(keyData)
+	if err != nil {
+		return fmt.Errorf("parse SSH key: %w", err)
+	}
+	cfg := &gossh.ClientConfig{
+		User:            "dune",
+		Auth:            []gossh.AuthMethod{gossh.PublicKeys(signer)},
+		HostKeyCallback: gossh.InsecureIgnoreHostKey(), //nolint:gosec
+		Timeout:         15 * time.Second,
+	}
+	logging.Infof("SSH(go): connecting to %s with key %s cmd=%s", ip, keyPath, remoteCmd)
+	return execGoSSH(ip, cfg, remoteCmd, out)
+}
+
+// execGoSSH is the shared transport for execSSHWithPassword and execSSHWithKey.
+func execGoSSH(ip string, cfg *gossh.ClientConfig, remoteCmd string, out func(string)) error {
+	client, err := gossh.Dial("tcp", net.JoinHostPort(ip, "22"), cfg)
+	if err != nil {
+		return fmt.Errorf("SSH connect: %w", err)
+	}
+	defer client.Close()
+
+	sess, err := client.NewSession()
+	if err != nil {
+		return fmt.Errorf("SSH session: %w", err)
+	}
+	defer sess.Close()
+
+	pr, pw := io.Pipe()
+	sess.Stdout = pw
+	sess.Stderr = pw
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		scanner := bufio.NewScanner(pr)
+		for scanner.Scan() {
+			out(scanner.Text() + "\n")
+		}
+	}()
+
+	runErr := sess.Run(remoteCmd)
+	_ = pw.Close()
+	wg.Wait()
+	return runErr
+}
+
+// fixSSHKeyPerms ensures the private key has Windows permissions strict enough
+// for OpenSSH to accept it. Uses PowerShell to create a completely fresh ACL
+// (disables inheritance, removes all previous ACEs, grants only SYSTEM and
+// Administrators full control) so no leftover user ACEs remain.
+func fixSSHKeyPerms(keyPath string) {
+	if _, err := os.Stat(keyPath); err != nil {
+		logging.Warningf("fixSSHKeyPerms: key file not found at %s: %v", keyPath, err)
+		return
+	}
+	script := fmt.Sprintf(`
+$p = '%s'
+$acl = New-Object System.Security.AccessControl.FileSecurity
+$acl.SetAccessRuleProtection($true, $false)
+$acl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new('NT AUTHORITY\SYSTEM', 'FullControl', 'Allow'))
+$acl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new('BUILTIN\Administrators', 'FullControl', 'Allow'))
+[System.IO.File]::SetAccessControl($p, $acl)
+`, keyPath)
+	cmd := exec.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		logging.Errorf("fixSSHKeyPerms: failed for %s: %v — %s", keyPath, err, strings.TrimSpace(string(out)))
+	} else {
+		logging.Infof("fixSSHKeyPerms: OK for %s", keyPath)
+	}
 }
 
 func (s *Server) execBattlegroup(cfg config.File, state *vm.State, subcommand string, out func(string)) error {
-	// Run without TTY (TERM=dumb suppresses ANSI codes, 2>&1 captures stderr).
-	// Using a TTY causes stdin to stay open and ANSI escape codes to appear in
-	// the output; non-interactive execution is correct for all subcommands.
+	logging.Infof("battlegroup: cmd=%s vmRunning=%v ip=%s keyPath=%s", subcommand, state.Running, state.IP, cfg.SSHKeyPath)
 	remoteCmd := fmt.Sprintf("TERM=dumb /home/dune/.dune/bin/battlegroup %s 2>&1", subcommand)
-	return s.execSSH(cfg, state, remoteCmd, func(line string) {
-		out(stripANSI(line))
+	hasOutput := false
+	err := s.execSSH(cfg, state, remoteCmd, func(line string) {
+		stripped := stripANSI(line)
+		if strings.TrimSpace(stripped) != "" {
+			hasOutput = true
+		}
+		logging.Infof("battlegroup output: %s", strings.TrimRight(stripped, "\n"))
+		out(stripped)
 	})
+	logging.Infof("battlegroup: cmd=%s done err=%v hasOutput=%v", subcommand, err, hasOutput)
+	if err == nil && !hasOutput {
+		out(fmt.Sprintf("(battlegroup %s returned no output)\n", subcommand))
+	}
+	return err
 }
 
 func (s *Server) execVMStart(out func(string), cfg config.File) error {
@@ -320,14 +413,16 @@ Write-Host "VM stopped." -ForegroundColor Green
 `, cfg.VMName, cfg.VMName), out)
 }
 
-func (s *Server) execSSHRotate(out func(string), cfg config.File, state *vm.State) error {
+func (s *Server) execSSHRotate(out func(string), cfg config.File, state *vm.State, vmPassword string) error {
 	if !state.Running || state.IP == "" {
 		return fmt.Errorf("VM is not running or IP is unavailable")
 	}
 
-	keyDir := filepath.Join(os.Getenv("LOCALAPPDATA"), "DuneAwakeningServer")
-	keyPath := filepath.Join(keyDir, "sshKey")
-	hasExistingKey := fileExists(keyPath)
+	// Use the key path from config — the service may run as a different user
+	// (LocalSystem) so LOCALAPPDATA would resolve to the system profile, not
+	// the user profile where the GUI stored the config and expects the key.
+	keyPath := cfg.SSHKeyPath
+	keyDir := filepath.Dir(keyPath)
 
 	// Use os.CreateTemp to get a unique temp path, then remove it so ssh-keygen
 	// can create the file itself.
@@ -372,42 +467,21 @@ func (s *Server) execSSHRotate(out func(string), cfg config.File, state *vm.Stat
 	installCmd := "echo " + b64Script + " | base64 -d | sh"
 
 	out("Installing new public key on VM...\n")
-	if hasExistingKey {
-		if err := s.execSSH(cfg, state, installCmd, out); err != nil {
-			return fmt.Errorf("install public key: %w", err)
+	// Try key auth first (normal case). If it fails and a password was
+	// supplied, fall back to password auth (handles key-out-of-sync scenarios).
+	installErr := s.execSSH(cfg, state, installCmd, out)
+	if installErr != nil {
+		if vmPassword == "" {
+			return fmt.Errorf("install public key: %w — provide the VM password in the dialog to recover", installErr)
 		}
-	} else {
-		// No local key yet — fall back to password auth (interactive TTY).
-		out("No existing key found — password authentication required.\n")
-		out("Enter the current 'dune' password when prompted (default: dune).\n")
-		args := []string{
-			"ssh", "-tt",
-			"-o", "StrictHostKeyChecking=no",
-			"-o", "LogLevel=QUIET",
-			"-o", "ConnectTimeout=10",
-			"-o", "PubkeyAuthentication=no",
-			"-o", "PreferredAuthentications=password",
-			fmt.Sprintf("dune@%s", state.IP),
-			installCmd,
-		}
-		if err := s.execCmdWithOptions(args, out, false); err != nil {
+		out("Key auth failed — retrying with password authentication.\n")
+		if err := execSSHWithPassword(state.IP, vmPassword, installCmd, out); err != nil {
 			return fmt.Errorf("install public key (password auth): %w", err)
 		}
 	}
 
 	out("Verifying new key authenticates...\n")
-	verifyArgs := []string{
-		"ssh",
-		"-o", "StrictHostKeyChecking=no",
-		"-o", "LogLevel=QUIET",
-		"-o", "ConnectTimeout=5",
-		"-o", "BatchMode=yes",
-		"-o", "IdentitiesOnly=yes",
-		"-i", tempStem,
-		fmt.Sprintf("dune@%s", state.IP),
-		"true",
-	}
-	if err := s.execCmd(verifyArgs, out); err != nil {
+	if err := execSSHWithKey(state.IP, tempStem, "true", func(string) {}); err != nil {
 		return fmt.Errorf("new key verification failed — key was installed but does not authenticate: %w", err)
 	}
 
@@ -424,12 +498,8 @@ func (s *Server) execSSHRotate(out func(string), cfg config.File, state *vm.Stat
 		return fmt.Errorf("save new public key: %w", err)
 	}
 
-	// Set restrictive ACL on the private key so OpenSSH accepts it (best-effort).
-	if userName := os.Getenv("USERNAME"); userName != "" {
-		icacls := exec.Command("icacls", keyPath, "/inheritance:r", "/grant:r", userName+":(R)")
-		icacls.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-		_ = icacls.Run()
-	}
+	// Apply strict ACL on the new private key so OpenSSH accepts it.
+	fixSSHKeyPerms(keyPath)
 
 	out(fmt.Sprintf("New SSH key installed at:\n  %s\n", keyPath))
 	return nil

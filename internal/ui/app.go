@@ -394,12 +394,28 @@ func cmdStopVM() {
 }
 
 func cmdRotateSSH() {
-	tryExec(func() {
-		appendHeader("Rotate SSH Key")
-		if _, err := svcClient.Exec(api.ExecRequest{Cmd: "ssh-rotate"}, appendOutput); err != nil {
-			appendOutput(fmt.Sprintf("Error: %v\n", err))
-		}
-	})
+	pwEntry := widget.NewPasswordEntry()
+	pwEntry.SetPlaceHolder("dune (default)")
+
+	note := widget.NewLabel("Enter the current 'dune' user password. Only needed if no SSH key exists yet.")
+	note.Wrapping = fyne.TextWrapWord
+
+	form := &widget.Form{
+		Items: []*widget.FormItem{
+			{Text: "VM password", Widget: pwEntry},
+		},
+		OnSubmit: func() {
+			pass := pwEntry.Text
+			tryExec(func() {
+				appendHeader("Rotate SSH Key")
+				if _, err := svcClient.Exec(api.ExecRequest{Cmd: "ssh-rotate", Password: pass}, appendOutput); err != nil {
+					appendOutput(fmt.Sprintf("Error: %v\n", err))
+				}
+			})
+		},
+		OnCancel: func() {},
+	}
+	dialog.ShowCustom("Rotate SSH Key", "Cancel", container.NewVBox(note, form), mainWindow)
 }
 
 func cmdChangePassword() {
