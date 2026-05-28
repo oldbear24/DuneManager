@@ -22,6 +22,7 @@ import (
 	"github.com/oldbear24/DuneManager/internal/discord"
 	"github.com/oldbear24/DuneManager/internal/runner"
 	"github.com/oldbear24/DuneManager/internal/updater"
+	"github.com/oldbear24/DuneManager/internal/winsvc"
 )
 
 // ── global state ───────────────────────────────────────────────────────────────
@@ -48,6 +49,9 @@ var (
 	// update button shown in status bar when a newer version is available
 	updateBtn    *widget.Button
 	updateGUIURL string // stored GUI download URL when update is ready
+
+	// service start/restart button in status bar
+	restartSvcBtn *widget.Button
 
 	// all command buttons — for bulk enable/disable
 	allButtons []*widget.Button
@@ -124,6 +128,8 @@ func buildStatusBar() fyne.CanvasObject {
 	updateBtn = widget.NewButton("⬆ Update available", cmdApplyUpdate)
 	updateBtn.Hide()
 
+	restartSvcBtn = widget.NewButton("▶ Start Service", cmdRestartService)
+
 	return container.NewHBox(
 		dotContainer,
 		widget.NewLabel("VM:"),
@@ -133,7 +139,7 @@ func buildStatusBar() fyne.CanvasObject {
 		layout.NewSpacer(),
 		updateBtn,
 		widget.NewButton("⟳ Refresh", func() { go refreshStatus() }),
-		widget.NewButton("↺ Restart Service", cmdRestartService),
+		restartSvcBtn,
 		widget.NewButton("🔍 Check updates", func() { go cmdCheckUpdate() }),
 		widget.NewButton("⚙ Settings", cmdSettings),
 	)
@@ -238,8 +244,10 @@ func updateStatusUI(status *api.StatusResponse) {
 		statusDot.Refresh()
 		statusLabel.SetText("Service Offline")
 		ipLabel.SetText("IP: —")
+		restartSvcBtn.SetText("▶ Start Service")
 		return
 	}
+	restartSvcBtn.SetText("↺ Restart Service")
 
 	var dotColor color.NRGBA
 	var label string
@@ -634,11 +642,34 @@ func cmdSettings() {
 // ── auto-update ────────────────────────────────────────────────────────────────
 
 // cmdRestartService asks the user to confirm, then restarts the background service.
+// If the service is offline, it offers to start it instead (via UAC elevation).
 func cmdRestartService() {
-	dialog.ShowConfirm("Restart Service",
-		"Restart the Dune Manager background service?\nThis will not affect the VM or battlegroup.",
+	offline := getStatus() == nil
+	var title, msg string
+	if offline {
+		title = "Start Service"
+		msg = "The DuneManager service is offline.\nStart it now? (A UAC prompt may appear.)"
+	} else {
+		title = "Restart Service"
+		msg = "Restart the Dune Manager background service?\nThis will not affect the VM or battlegroup."
+	}
+	dialog.ShowConfirm(title, msg,
 		func(ok bool) {
 			if !ok {
+				return
+			}
+			if offline {
+				appendHeader("Start Service")
+				if err := winsvc.StartElevated(); err != nil {
+					appendOutput(fmt.Sprintf("Error: %v\n", err))
+					return
+				}
+				appendOutput("Starting service… (UAC prompt may appear)\n")
+				go func() {
+					time.Sleep(4 * time.Second)
+					svcClient = api.NewClient()
+					refreshStatus()
+				}()
 				return
 			}
 			appendHeader("Restart Service")

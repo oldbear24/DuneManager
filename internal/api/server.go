@@ -2,12 +2,17 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/oldbear24/DuneManager/internal/build"
@@ -16,25 +21,22 @@ import (
 	"github.com/oldbear24/DuneManager/internal/runner"
 	"github.com/oldbear24/DuneManager/internal/updater"
 	"github.com/oldbear24/DuneManager/internal/vm"
+	"github.com/oldbear24/DuneManager/internal/winsvc"
 )
 
 // Server wraps the HTTP service that runs in the background process.
 type Server struct {
-	httpServer  *http.Server
-	restartArgs []string
-	mu          sync.Mutex
-	busy        bool
-	activeKill  func()
-	killable    bool
-	killQueued  bool
+	httpServer *http.Server
+	mu         sync.Mutex
+	busy       bool
+	activeKill func()
+	killable   bool
+	killQueued bool
 }
 
 // NewServer builds the HTTP mux and server struct but does not start listening.
-func NewServer(restartArgs ...string) *Server {
-	if len(restartArgs) == 0 {
-		restartArgs = []string{"--run"}
-	}
-	s := &Server{restartArgs: append([]string(nil), restartArgs...)}
+func NewServer() *Server {
+	s := &Server{}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/status", s.handleStatus)
 	mux.HandleFunc("/api/exec", s.handleExec)
@@ -259,6 +261,7 @@ func (s *Server) execSSHWithTTY(cfg config.File, state *vm.State, remoteCmd stri
 	args = append(args,
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "LogLevel=QUIET",
+		"-o", "ConnectTimeout=10",
 		"-i", cfg.SSHKeyPath,
 		fmt.Sprintf("dune@%s", state.IP),
 		remoteCmd,
@@ -267,7 +270,13 @@ func (s *Server) execSSHWithTTY(cfg config.File, state *vm.State, remoteCmd stri
 }
 
 func (s *Server) execBattlegroup(cfg config.File, state *vm.State, subcommand string, out func(string)) error {
-	return s.execSSHWithTTY(cfg, state, "/home/dune/.dune/bin/battlegroup "+subcommand, true, out)
+	// Run without TTY (TERM=dumb suppresses ANSI codes, 2>&1 captures stderr).
+	// Using a TTY causes stdin to stay open and ANSI escape codes to appear in
+	// the output; non-interactive execution is correct for all subcommands.
+	remoteCmd := fmt.Sprintf("TERM=dumb /home/dune/.dune/bin/battlegroup %s 2>&1", subcommand)
+	return s.execSSH(cfg, state, remoteCmd, func(line string) {
+		out(stripANSI(line))
+	})
 }
 
 func (s *Server) execVMStart(out func(string), cfg config.File) error {
@@ -315,9 +324,115 @@ func (s *Server) execSSHRotate(out func(string), cfg config.File, state *vm.Stat
 	if !state.Running || state.IP == "" {
 		return fmt.Errorf("VM is not running or IP is unavailable")
 	}
-	return s.execPS(fmt.Sprintf(`. '%s'
-Update-SshKey -Ip '%s'
-`, config.VMUtilitiesPS(), state.IP), out)
+
+	keyDir := filepath.Join(os.Getenv("LOCALAPPDATA"), "DuneAwakeningServer")
+	keyPath := filepath.Join(keyDir, "sshKey")
+	hasExistingKey := fileExists(keyPath)
+
+	// Use os.CreateTemp to get a unique temp path, then remove it so ssh-keygen
+	// can create the file itself.
+	tmpFile, err := os.CreateTemp("", "dune-newkey-")
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
+	}
+	tempStem := tmpFile.Name()
+	tmpFile.Close()
+	_ = os.Remove(tempStem)
+	defer func() {
+		_ = os.Remove(tempStem)
+		_ = os.Remove(tempStem + ".pub")
+	}()
+
+	out("Generating new SSH key pair...\n")
+	hostname, _ := os.Hostname()
+	keygen := exec.Command("ssh-keygen", "-t", "ed25519", "-f", tempStem, "-N", "", "-q",
+		"-C", "vm-server@"+hostname)
+	keygen.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	if output, err := keygen.CombinedOutput(); err != nil {
+		return fmt.Errorf("ssh-keygen failed: %w — %s", err, strings.TrimSpace(string(output)))
+	}
+
+	pubData, err := os.ReadFile(tempStem + ".pub")
+	if err != nil {
+		return fmt.Errorf("read public key: %w", err)
+	}
+	b64Pub := base64.StdEncoding.EncodeToString(pubData)
+
+	// Build a self-contained shell script, then base64-encode the whole thing
+	// so it can be piped through a single SSH command without quoting issues.
+	remoteScript := "#!/bin/sh\n" +
+		"set -e\n" +
+		"mkdir -p $HOME/.ssh\n" +
+		"chmod 700 $HOME/.ssh\n" +
+		"echo " + b64Pub + " | base64 -d > $HOME/.ssh/authorized_keys.new\n" +
+		"chmod 600 $HOME/.ssh/authorized_keys.new\n" +
+		"mv $HOME/.ssh/authorized_keys.new $HOME/.ssh/authorized_keys\n" +
+		"echo ROTATE_OK\n"
+	b64Script := base64.StdEncoding.EncodeToString([]byte(remoteScript))
+	installCmd := "echo " + b64Script + " | base64 -d | sh"
+
+	out("Installing new public key on VM...\n")
+	if hasExistingKey {
+		if err := s.execSSH(cfg, state, installCmd, out); err != nil {
+			return fmt.Errorf("install public key: %w", err)
+		}
+	} else {
+		// No local key yet — fall back to password auth (interactive TTY).
+		out("No existing key found — password authentication required.\n")
+		out("Enter the current 'dune' password when prompted (default: dune).\n")
+		args := []string{
+			"ssh", "-tt",
+			"-o", "StrictHostKeyChecking=no",
+			"-o", "LogLevel=QUIET",
+			"-o", "ConnectTimeout=10",
+			"-o", "PubkeyAuthentication=no",
+			"-o", "PreferredAuthentications=password",
+			fmt.Sprintf("dune@%s", state.IP),
+			installCmd,
+		}
+		if err := s.execCmdWithOptions(args, out, false); err != nil {
+			return fmt.Errorf("install public key (password auth): %w", err)
+		}
+	}
+
+	out("Verifying new key authenticates...\n")
+	verifyArgs := []string{
+		"ssh",
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "LogLevel=QUIET",
+		"-o", "ConnectTimeout=5",
+		"-o", "BatchMode=yes",
+		"-o", "IdentitiesOnly=yes",
+		"-i", tempStem,
+		fmt.Sprintf("dune@%s", state.IP),
+		"true",
+	}
+	if err := s.execCmd(verifyArgs, out); err != nil {
+		return fmt.Errorf("new key verification failed — key was installed but does not authenticate: %w", err)
+	}
+
+	// Replace local key files.
+	if err := os.MkdirAll(keyDir, 0755); err != nil {
+		return fmt.Errorf("create key directory: %w", err)
+	}
+	_ = os.Remove(keyPath)
+	_ = os.Remove(keyPath + ".pub")
+	if err := renameOrCopy(tempStem, keyPath, 0600); err != nil {
+		return fmt.Errorf("save new private key: %w", err)
+	}
+	if err := renameOrCopy(tempStem+".pub", keyPath+".pub", 0644); err != nil {
+		return fmt.Errorf("save new public key: %w", err)
+	}
+
+	// Set restrictive ACL on the private key so OpenSSH accepts it (best-effort).
+	if userName := os.Getenv("USERNAME"); userName != "" {
+		icacls := exec.Command("icacls", keyPath, "/inheritance:r", "/grant:r", userName+":(R)")
+		icacls.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+		_ = icacls.Run()
+	}
+
+	out(fmt.Sprintf("New SSH key installed at:\n  %s\n", keyPath))
+	return nil
 }
 
 func (s *Server) execPasswordChange(out func(string), cfg config.File, state *vm.State, password string) error {
@@ -327,13 +442,51 @@ func (s *Server) execPasswordChange(out func(string), cfg config.File, state *vm
 	if password == "" {
 		return fmt.Errorf("password cannot be empty")
 	}
-	escaped := strings.ReplaceAll(password, "'", "''")
-	return s.execPS(fmt.Sprintf(`. '%s'
-$pw = ConvertTo-SecureString '%s' -AsPlainText -Force
-if (Set-VmPassword -Ip '%s' -NewPassword $pw) {
-    Write-Host "Password changed successfully." -ForegroundColor Green
+
+	// Base64-encode "dune:<password>\n" so special characters in the password
+	// are safely passed through the shell pipeline.
+	b64 := base64.StdEncoding.EncodeToString([]byte("dune:" + password + "\n"))
+	remoteCmd := fmt.Sprintf("echo %s | base64 -d | sudo -n chpasswd && echo PWOK", b64)
+
+	var gotPWOK bool
+	err := s.execSSH(cfg, state, remoteCmd, func(line string) {
+		if strings.Contains(line, "PWOK") {
+			gotPWOK = true
+			return // don't echo the sentinel to the UI
+		}
+		out(line)
+	})
+	if err != nil {
+		return fmt.Errorf("password change failed: %w", err)
+	}
+	if !gotPWOK {
+		return fmt.Errorf("password change failed — user may lack passwordless sudo for chpasswd")
+	}
+	out("Password changed successfully.\n")
+	return nil
 }
-`, config.VMUtilitiesPS(), escaped, state.IP), out)
+
+// fileExists returns true if path exists on disk.
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// renameOrCopy moves src to dst, falling back to a copy if os.Rename fails
+// (e.g. cross-device). perm is used only for the copy fallback.
+func renameOrCopy(src, dst string, perm os.FileMode) error {
+	if err := os.Rename(src, dst); err == nil {
+		return nil
+	}
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(dst, data, perm); err != nil {
+		return err
+	}
+	_ = os.Remove(src)
+	return nil
 }
 
 func (s *Server) execDirectorPort(out func(string), cfg config.File, state *vm.State) (string, error) {
@@ -369,6 +522,13 @@ func isNumeric(s string) bool {
 		}
 	}
 	return true
+}
+
+var ansiEscapeRE = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]|\x1b[^[a-zA-Z]*[a-zA-Z]|\x0f|\x0e`)
+
+// stripANSI removes ANSI terminal escape sequences from a string.
+func stripANSI(s string) string {
+	return ansiEscapeRE.ReplaceAllString(s, "")
 }
 
 // ── update endpoints ───────────────────────────────────────────────────────────
@@ -471,12 +631,11 @@ func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 		emit("output", "Applying service update...\n")
 		svcPath, _ := os.Executable()
 		if err := updater.LaunchHelper(updater.HelperPlan{
-			WaitPID:     os.Getpid(),
-			SourcePath:  tmpSvc,
-			TargetPath:  svcPath,
-			RestartPath: svcPath,
-			RestartArgs: s.restartArgs,
-			HideWindow:  true,
+			WaitPID:          os.Getpid(),
+			SourcePath:       tmpSvc,
+			TargetPath:       svcPath,
+			StartServiceName: winsvc.ServiceName,
+			HideWindow:       true,
 		}); err != nil {
 			logging.Errorf("service update apply failed: %v", err)
 			ev, _ := json.Marshal(SSEEvent{Type: "done", Error: "apply svc: " + err.Error()})
@@ -510,7 +669,7 @@ func writeJSON(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// handleServiceRestart responds immediately then restarts the service process.
+// handleServiceRestart responds immediately then restarts the service via the Windows SCM.
 func (s *Server) handleServiceRestart(w http.ResponseWriter, r *http.Request) {
 	logging.Infof("service restart requested")
 	if !s.beginExclusive(false) {
@@ -525,17 +684,10 @@ func (s *Server) handleServiceRestart(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	svcPath, err := os.Executable()
-	if err != nil {
-		logging.Errorf("service restart failed to resolve executable path: %v", err)
-		http.Error(w, "restart failed: executable path unavailable", http.StatusInternalServerError)
-		return
-	}
 	if err := updater.LaunchHelper(updater.HelperPlan{
-		WaitPID:     os.Getpid(),
-		RestartPath: svcPath,
-		RestartArgs: s.restartArgs,
-		HideWindow:  true,
+		WaitPID:          os.Getpid(),
+		StartServiceName: winsvc.ServiceName,
+		HideWindow:       true,
 	}); err != nil {
 		logging.Errorf("service restart handoff failed: %v", err)
 		http.Error(w, "restart failed: "+err.Error(), http.StatusInternalServerError)
@@ -546,7 +698,7 @@ func (s *Server) handleServiceRestart(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer s.endExclusive()
 		time.Sleep(500 * time.Millisecond)
-		logging.Infof("service exiting for restart helper handoff")
+		logging.Infof("service exiting for SCM restart")
 		os.Exit(0)
 	}()
 	release = false

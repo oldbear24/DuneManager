@@ -17,12 +17,13 @@ import (
 const userAgent = "dune-manager-updater/1.0"
 
 type HelperPlan struct {
-	WaitPID     int      `json:"waitPid"`
-	SourcePath  string   `json:"sourcePath"`
-	TargetPath  string   `json:"targetPath"`
-	RestartPath string   `json:"restartPath,omitempty"`
-	RestartArgs []string `json:"restartArgs,omitempty"`
-	HideWindow  bool     `json:"hideWindow,omitempty"`
+	WaitPID          int      `json:"waitPid"`
+	SourcePath       string   `json:"sourcePath"`
+	TargetPath       string   `json:"targetPath"`
+	RestartPath      string   `json:"restartPath,omitempty"`
+	RestartArgs      []string `json:"restartArgs,omitempty"`
+	StartServiceName string   `json:"startServiceName,omitempty"`
+	HideWindow       bool     `json:"hideWindow,omitempty"`
 }
 
 // Release is the GitHub Releases API response shape we care about.

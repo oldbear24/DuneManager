@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/oldbear24/DuneManager/internal/updater"
+	"github.com/oldbear24/DuneManager/internal/winsvc"
 	"golang.org/x/sys/windows"
 )
 
@@ -54,7 +55,11 @@ func run(planPath string) error {
 		}
 	}
 
-	if plan.RestartPath != "" {
+	if plan.StartServiceName != "" {
+		if err := winsvc.Start(); err != nil {
+			return fmt.Errorf("start service %q: %w", plan.StartServiceName, err)
+		}
+	} else if plan.RestartPath != "" {
 		cmd := exec.Command(plan.RestartPath, plan.RestartArgs...)
 		cmd.SysProcAttr = &syscall.SysProcAttr{
 			HideWindow:    plan.HideWindow,

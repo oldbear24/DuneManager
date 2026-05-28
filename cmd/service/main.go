@@ -14,13 +14,14 @@ import (
 	"github.com/oldbear24/DuneManager/internal/config"
 	"github.com/oldbear24/DuneManager/internal/discord"
 	"github.com/oldbear24/DuneManager/internal/logging"
+	"github.com/oldbear24/DuneManager/internal/winsvc"
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/eventlog"
 	"golang.org/x/sys/windows/svc/mgr"
 )
 
 const (
-	svcName        = "DuneManager"
+	svcName        = winsvc.ServiceName
 	svcDisplayName = "Dune Awakening Server Manager"
 	svcDescription = "Manages a Dune Awakening dedicated server running in Hyper-V"
 )
@@ -75,7 +76,7 @@ func runForeground() {
 	}
 	defer cleanup()
 
-	srv := api.NewServer("--run")
+	srv := api.NewServer()
 	logging.Infof("service starting in foreground on %s", config.ServiceAddr())
 	bot := startDiscordBot()
 	defer func() {
@@ -99,7 +100,7 @@ func (ds *duneService) Execute(_ []string, r <-chan svc.ChangeRequest, changes c
 	const cmdsAccepted = svc.AcceptStop | svc.AcceptShutdown
 	changes <- svc.Status{State: svc.StartPending}
 
-	ds.srv = api.NewServer("--start")
+	ds.srv = api.NewServer()
 	go func() {
 		if err := ds.srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logging.Errorf("service listener failed: %v", err)
@@ -260,32 +261,9 @@ func removeService() error {
 }
 
 func startService() error {
-	m, err := mgr.Connect()
-	if err != nil {
-		return err
-	}
-	defer m.Disconnect()
-
-	s, err := m.OpenService(svcName)
-	if err != nil {
-		return fmt.Errorf("service %q not found", svcName)
-	}
-	defer s.Close()
-	return s.Start()
+	return winsvc.Start()
 }
 
 func stopService() error {
-	m, err := mgr.Connect()
-	if err != nil {
-		return err
-	}
-	defer m.Disconnect()
-
-	s, err := m.OpenService(svcName)
-	if err != nil {
-		return fmt.Errorf("service %q not found", svcName)
-	}
-	defer s.Close()
-	_, err = s.Control(svc.Stop)
-	return err
+	return winsvc.Stop()
 }
