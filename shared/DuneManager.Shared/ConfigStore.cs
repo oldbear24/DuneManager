@@ -43,7 +43,11 @@ public sealed class ConfigStore
         Normalize(config);
         lock (gate)
         {
-            Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Path)!);
+            var dir = System.IO.Path.GetDirectoryName(Path);
+            if (!string.IsNullOrWhiteSpace(dir))
+            {
+                Directory.CreateDirectory(dir);
+            }
             File.WriteAllText(Path, JsonSerializer.Serialize(config, jsonOptions));
             Current = config;
         }
