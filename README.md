@@ -2,6 +2,35 @@
 
 A Windows application for managing a **Dune Awakening dedicated server** running inside a Hyper-V virtual machine.
 
+
+## .NET Rewrite
+
+The app now includes a .NET solution with a Windows Forms client and a backend console app:
+
+| Project | Output | Role |
+|---|---|---|
+| `src/DuneManager.WinForms` | `dune-manager.exe` | Windows Forms GUI client. Connects to the backend over HTTP and does not need elevation for normal use. |
+| `src/DuneManager.Backend` | `dune-manager-backend.exe` | Console backend. Runs Hyper-V, PowerShell, and SSH operations and streams command output to the GUI via server-sent events. |
+| `shared/DuneManager.Shared` | class library | Shared config and API DTOs used by both apps. |
+
+Build from a Windows machine with the .NET 8 SDK:
+
+```powershell
+dotnet restore .\DuneManager.sln
+dotnet build .\DuneManager.sln -c Release
+```
+
+Run the backend from an elevated console so Hyper-V operations are available, then launch the WinForms app:
+
+```powershell
+.\src\DuneManager.Backend\bin\Release\net8.0-windows\dune-manager-backend.exe
+.\src\DuneManager.WinForms\bin\Release\net8.0-windows\dune-manager.exe
+```
+
+The .NET apps use the same `dune-manager.json` shape as the previous Go implementation, including the default port (`7374`), VM name (`dune-awakening`), scripts directory, SSH key path, Discord fields, and GitHub repo field. Auto-update and Discord bot hosting are preserved in the config for compatibility but are not implemented by the .NET backend yet.
+
+The WinForms UI is split into designer-friendly `*.Designer.cs` partial classes, so `MainForm` and `SettingsForm` can be opened and edited with the Visual Studio Windows Forms Designer.
+
 The project is split into two binaries:
 
 | Binary | Role |
@@ -32,7 +61,8 @@ The project is split into two binaries:
 | Windows 10/11 Pro or Enterprise | Hyper-V must be available |
 | Hyper-V enabled | `Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-All` |
 | OpenSSH client | Settings → Optional Features → OpenSSH Client |
-| Go 1.21+ | For building from source |
+| .NET 8 SDK | For building the WinForms and backend console rewrite |
+| Go 1.21+ | Only needed for the legacy Go binaries |
 
 ---
 
