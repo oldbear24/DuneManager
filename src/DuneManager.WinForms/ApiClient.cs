@@ -5,7 +5,7 @@ using DuneManager.Shared;
 
 namespace DuneManager.WinForms;
 
-internal sealed class ApiClient
+internal sealed class ApiClient : IDisposable
 {
     private readonly HttpClient http = new() { Timeout = Timeout.InfiniteTimeSpan };
     private readonly JsonSerializerOptions jsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
@@ -82,5 +82,10 @@ internal sealed class ApiClient
     public async Task<UpdateCheckResponse> CheckUpdateAsync(CancellationToken cancellationToken = default)
     {
         return await http.GetFromJsonAsync<UpdateCheckResponse>(BaseUrl + "/api/update/check", cancellationToken) ?? new UpdateCheckResponse();
+    }
+
+    public void Dispose()
+    {
+        http.Dispose();
     }
 }

@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "dgSpecHash": "wEPGloYSY+4=",
+  "success": true,
+  "projectFilePath": "/home/runner/work/DuneManager/DuneManager/oldbear24/DuneManager/src/DuneManager.WinForms/DuneManager.WinForms.csproj",
+  "expectedPackageFiles": [
+    "/home/runner/.nuget/packages/microsoft.windowsdesktop.app.ref/8.0.27/microsoft.windowsdesktop.app.ref.8.0.27.nupkg.sha512"
+  ],
+  "logs": []
+}

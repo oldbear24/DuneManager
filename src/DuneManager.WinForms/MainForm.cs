@@ -23,6 +23,7 @@ internal sealed partial class MainForm : Form
         InitializeComponent();
         WireEvents();
         RegisterCommandButtons();
+        FormClosed += (_, _) => client.Dispose();
 
         statusTimer.Start();
         Shown += async (_, _) => await RefreshStatusAsync();
@@ -182,7 +183,9 @@ internal sealed partial class MainForm : Form
         if (form.ShowDialog(this) == DialogResult.OK)
         {
             configStore.Save(form.ToConfig(existing));
+            var previousClient = client;
             client = new ApiClient(configStore.Snapshot());
+            previousClient.Dispose();
             MessageBox.Show(this, "Settings saved. Restart the backend for port changes to take effect.", "Saved", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
     }
