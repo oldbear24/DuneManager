@@ -36,15 +36,17 @@ internal sealed class ProcessRunner
         }
     }
 
-    public async Task<int> RunAsync(string fileName, string arguments, Action<string> output, CancellationToken cancellationToken = default)
+    public async Task<int> RunAsync(string fileName, IEnumerable<string> arguments, Action<string> output, CancellationToken cancellationToken = default)
     {
-        var startInfo = new ProcessStartInfo(fileName, arguments)
+        var startInfo = new ProcessStartInfo(fileName)
         {
             UseShellExecute = false,
             CreateNoWindow = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true
         };
+        foreach (var arg in arguments)
+            startInfo.ArgumentList.Add(arg);
 
         using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         lock (gate)
@@ -89,15 +91,17 @@ internal sealed class ProcessRunner
         }
     }
 
-    public static async Task<string> CaptureAsync(string fileName, string arguments, CancellationToken cancellationToken = default)
+    public static async Task<string> CaptureAsync(string fileName, IEnumerable<string> arguments, CancellationToken cancellationToken = default)
     {
-        var startInfo = new ProcessStartInfo(fileName, arguments)
+        var startInfo = new ProcessStartInfo(fileName)
         {
             UseShellExecute = false,
             CreateNoWindow = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true
         };
+        foreach (var arg in arguments)
+            startInfo.ArgumentList.Add(arg);
         using var process = Process.Start(startInfo) ?? throw new InvalidOperationException($"Could not start {fileName}.");
         var stdout = await process.StandardOutput.ReadToEndAsync(cancellationToken);
         var stderr = await process.StandardError.ReadToEndAsync(cancellationToken);

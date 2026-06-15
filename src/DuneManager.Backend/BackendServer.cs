@@ -235,7 +235,7 @@ internal sealed class BackendServer
         }
         Directory.CreateDirectory(keyDir);
         var tempKey = Path.Combine(Path.GetTempPath(), "dune-newkey-" + Guid.NewGuid().ToString("N"));
-        await RunProcessCheckedAsync("ssh-keygen", $"-t ed25519 -f \"{tempKey}\" -N \"\" -q", output);
+        await RunProcessCheckedAsync("ssh-keygen", ["-t", "ed25519", "-f", tempKey, "-N", "", "-q"], output);
 
         var publicKey = Convert.ToBase64String(await File.ReadAllBytesAsync(tempKey + ".pub"));
         var installCommand = "mkdir -p $HOME/.ssh && chmod 700 $HOME/.ssh && echo " + publicKey + " | base64 -d > $HOME/.ssh/authorized_keys && chmod 600 $HOME/.ssh/authorized_keys && echo ROTATE_OK";
@@ -271,7 +271,7 @@ internal sealed class BackendServer
     private async Task RunSshAsync(DuneConfig cfg, StatusResponse state, string command, Action<string> output)
     {
         RequireVm(state);
-        await RunProcessCheckedAsync("ssh", $"-o StrictHostKeyChecking=no -i \"{cfg.SSHKeyPath}\" dune@{state.IP} \"{command.Replace("\"", "\\\"")}\"", output);
+        await RunProcessCheckedAsync("ssh", ["-o", "StrictHostKeyChecking=no", "-i", cfg.SSHKeyPath, $"dune@{state.IP}", command], output);
     }
 
     private async Task RunPowerShellAsync(string script, Action<string> output)
@@ -279,7 +279,7 @@ internal sealed class BackendServer
         await RunProcessCheckedAsync("powershell", PowerShellArgs(script), output);
     }
 
-    private async Task RunProcessCheckedAsync(string fileName, string arguments, Action<string> output)
+    private async Task RunProcessCheckedAsync(string fileName, IEnumerable<string> arguments, Action<string> output)
     {
         var exitCode = await runner.RunAsync(fileName, arguments, output, shutdown.Token);
         if (exitCode != 0)
@@ -338,7 +338,7 @@ if ($vm.State -eq 'Running') {{ Write-Host 'VM started.' }} else {{ Write-Host '
         await context.Response.OutputStream.FlushAsync();
     }
 
-    private static string PowerShellArgs(string script) => $"-NoProfile -ExecutionPolicy Bypass -Command \"{script.Replace("\"", "\\\"")}\"";
+    private static IEnumerable<string> PowerShellArgs(string script) => ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script];
 
     private static string EscapePowerShellSingleQuoted(string value) => value.Replace("'", "''");
 
