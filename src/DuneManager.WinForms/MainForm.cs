@@ -209,7 +209,14 @@ internal sealed partial class MainForm : Form
             return;
         }
 
-        Process.Start(new ProcessStartInfo(backendPath) { UseShellExecute = true, Verb = "runas" });
+        try
+        {
+            Process.Start(new ProcessStartInfo(backendPath) { UseShellExecute = true, Verb = "runas" });
+        }
+        catch (System.ComponentModel.Win32Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "Could not start backend", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 
     private void AppendHeader(string title) => AppendOutput(Environment.NewLine + "══ " + title + " ══" + Environment.NewLine);
