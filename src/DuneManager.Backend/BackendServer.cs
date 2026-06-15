@@ -228,9 +228,13 @@ internal sealed class BackendServer
     private async Task RotateSshKeyAsync(DuneConfig cfg, StatusResponse state, string password, Action<string> output)
     {
         RequireVm(state);
-        Directory.CreateDirectory(Path.GetDirectoryName(cfg.SSHKeyPath)!);
+        var keyDir = Path.GetDirectoryName(cfg.SSHKeyPath);
+        if (string.IsNullOrWhiteSpace(keyDir))
+        {
+            throw new InvalidOperationException($"SSHKeyPath must include a directory: '{cfg.SSHKeyPath}'");
+        }
+        Directory.CreateDirectory(keyDir);
         var tempKey = Path.Combine(Path.GetTempPath(), "dune-newkey-" + Guid.NewGuid().ToString("N"));
-        output("Generating new SSH key pair...\n");
         await RunProcessCheckedAsync("ssh-keygen", $"-t ed25519 -f \"{tempKey}\" -N \"\" -q", output);
 
         var publicKey = Convert.ToBase64String(await File.ReadAllBytesAsync(tempKey + ".pub"));
