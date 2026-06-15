@@ -47,6 +47,7 @@ internal sealed class BackendServer
 
     public void Stop()
     {
+        runner.KillActive();
         shutdown.Cancel();
         listener.Stop();
     }
