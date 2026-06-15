@@ -137,7 +137,7 @@ internal sealed class BackendServer
 
         if (!await exclusive.WaitAsync(0))
         {
-            await WriteSseAsync(context, new SseEvent { Type = "done", Error = "busy: another command is running" });
+            WriteSseBlocking(context, new SseEvent { Type = "done", Error = "busy: another command is running" });
             context.Response.Close();
             return;
         }
@@ -147,11 +147,11 @@ internal sealed class BackendServer
         {
             string result = string.Empty;
             await ExecuteCommandAsync(request, line => WriteSseBlocking(context, new SseEvent { Type = "output", Line = StripAnsi(line) }), value => result = value);
-            await WriteSseAsync(context, new SseEvent { Type = "done", Line = result });
+            WriteSseBlocking(context, new SseEvent { Type = "done", Line = result });
         }
         catch (Exception ex)
         {
-            await WriteSseAsync(context, new SseEvent { Type = "done", Error = ex.Message });
+            WriteSseBlocking(context, new SseEvent { Type = "done", Error = ex.Message });
         }
         finally
         {
