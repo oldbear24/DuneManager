@@ -52,8 +52,18 @@ internal sealed class ProcessRunner
             activeProcess = process;
         }
 
-        process.OutputDataReceived += (_, e) => { if (e.Data is not null) output(e.Data + Environment.NewLine); };
-        process.ErrorDataReceived += (_, e) => { if (e.Data is not null) output(e.Data + Environment.NewLine); };
+        process.OutputDataReceived += (_, e) =>
+        {
+            if (e.Data is null) return;
+            try { output(e.Data + Environment.NewLine); }
+            catch { /* ignore output sink failures (e.g., client disconnect) */ }
+        };
+        process.ErrorDataReceived += (_, e) =>
+        {
+            if (e.Data is null) return;
+            try { output(e.Data + Environment.NewLine); }
+            catch { /* ignore output sink failures (e.g., client disconnect) */ }
+        };
 
         try
         {
