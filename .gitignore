@@ -23,6 +23,11 @@ go.work.sum
 dist/
 /build/
 
+# .NET build artifacts
+bin/
+obj/
+*.pdb
+
 # IDE
 .idea/
 .vscode/
