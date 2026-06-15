@@ -10,7 +10,7 @@
         "projectUniqueName": "/home/runner/work/DuneManager/DuneManager/oldbear24/DuneManager/shared/DuneManager.Shared/DuneManager.Shared.csproj",
         "projectName": "DuneManager.Shared",
         "projectPath": "/home/runner/work/DuneManager/DuneManager/oldbear24/DuneManager/shared/DuneManager.Shared/DuneManager.Shared.csproj",
-        "packagesPath": "/home/runner/.nuget/packages/",
+        "packagesPath": "/tmp/codeql-scratch-15009a05a67a9645/dbs/csharp/working/packages",
         "outputPath": "/home/runner/work/DuneManager/DuneManager/oldbear24/DuneManager/shared/DuneManager.Shared/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
@@ -58,6 +58,14 @@
           "warn": true,
           "downloadDependencies": [
             {
+              "name": "Microsoft.AspNetCore.App.Ref",
+              "version": "[8.0.27, 8.0.27]"
+            },
+            {
+              "name": "Microsoft.NETCore.App.Ref",
+              "version": "[8.0.27, 8.0.27]"
+            },
+            {
               "name": "Microsoft.WindowsDesktop.App.Ref",
               "version": "[8.0.27, 8.0.27]"
             }
@@ -77,7 +85,7 @@
         "projectUniqueName": "/home/runner/work/DuneManager/DuneManager/oldbear24/DuneManager/src/DuneManager.WinForms/DuneManager.WinForms.csproj",
         "projectName": "dune-manager",
         "projectPath": "/home/runner/work/DuneManager/DuneManager/oldbear24/DuneManager/src/DuneManager.WinForms/DuneManager.WinForms.csproj",
-        "packagesPath": "/home/runner/.nuget/packages/",
+        "packagesPath": "/tmp/codeql-scratch-15009a05a67a9645/dbs/csharp/working/packages",
         "outputPath": "/home/runner/work/DuneManager/DuneManager/oldbear24/DuneManager/src/DuneManager.WinForms/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
@@ -128,6 +136,18 @@
           "assetTargetFallback": true,
           "warn": true,
           "downloadDependencies": [
+            {
+              "name": "Microsoft.AspNetCore.App.Ref",
+              "version": "[8.0.27, 8.0.27]"
+            },
+            {
+              "name": "Microsoft.NETCore.App.Host.linux-x64",
+              "version": "[8.0.27, 8.0.27]"
+            },
+            {
+              "name": "Microsoft.NETCore.App.Ref",
+              "version": "[8.0.27, 8.0.27]"
+            },
             {
               "name": "Microsoft.WindowsDesktop.App.Ref",
               "version": "[8.0.27, 8.0.27]"

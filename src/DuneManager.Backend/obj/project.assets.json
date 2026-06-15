@@ -27,7 +27,7 @@
     ]
   },
   "packageFolders": {
-    "/home/runner/.nuget/packages/": {}
+    "/tmp/codeql-scratch-15009a05a67a9645/dbs/csharp/working/packages": {}
   },
   "project": {
     "version": "1.0.0",
@@ -35,7 +35,7 @@
       "projectUniqueName": "/home/runner/work/DuneManager/DuneManager/oldbear24/DuneManager/src/DuneManager.Backend/DuneManager.Backend.csproj",
       "projectName": "dune-manager-backend",
       "projectPath": "/home/runner/work/DuneManager/DuneManager/oldbear24/DuneManager/src/DuneManager.Backend/DuneManager.Backend.csproj",
-      "packagesPath": "/home/runner/.nuget/packages/",
+      "packagesPath": "/tmp/codeql-scratch-15009a05a67a9645/dbs/csharp/working/packages",
       "outputPath": "/home/runner/work/DuneManager/DuneManager/oldbear24/DuneManager/src/DuneManager.Backend/obj/",
       "projectStyle": "PackageReference",
       "configFilePaths": [
@@ -86,6 +86,18 @@
         "assetTargetFallback": true,
         "warn": true,
         "downloadDependencies": [
+          {
+            "name": "Microsoft.AspNetCore.App.Ref",
+            "version": "[8.0.27, 8.0.27]"
+          },
+          {
+            "name": "Microsoft.NETCore.App.Host.linux-x64",
+            "version": "[8.0.27, 8.0.27]"
+          },
+          {
+            "name": "Microsoft.NETCore.App.Ref",
+            "version": "[8.0.27, 8.0.27]"
+          },
           {
             "name": "Microsoft.WindowsDesktop.App.Ref",
             "version": "[8.0.27, 8.0.27]"
